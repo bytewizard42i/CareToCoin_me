@@ -16,5 +16,6 @@ export const onRamp = impl.onRampProvider;
 export const donation = impl.donationProvider;
 export const offRamp = impl.offRampProvider;
 export const moderation = impl.moderationProvider;
+export const taxReceipt = impl.taxReceiptProvider;
 
 export const isDemo = C2C_MODE !== 'realdeal';

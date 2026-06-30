@@ -46,3 +46,8 @@ export const moderationProvider = {
   // TODO: call a real Ai moderation model/API to screen public dedications.
   async screenDedication() { notWired('moderationProvider.screenDedication'); },
 };
+
+export const taxReceiptProvider = {
+  // TODO: derive the tax receipt from the on-chain commitment + selective-disclosure proof.
+  async issue() { notWired('taxReceiptProvider.issue'); },
+};

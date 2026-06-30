@@ -8,9 +8,9 @@ export default function ResearchPanel({ entity, kind }) {
   if (!r) return null;
 
   return (
-    <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
+    <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4 text-sm">
       <div className="flex items-center justify-between">
-        <h4 className="font-semibold text-slate-800">Research: {r.name}</h4>
+        <h4 className="font-semibold text-slate-800 dark:text-slate-100">Research: {r.name}</h4>
         {r.verified === false && (
           <span className="inline-flex items-center gap-1 text-xs text-amber-700">
             <ShieldAlert size={14} /> Unverified payout (demo)
@@ -23,7 +23,7 @@ export default function ResearchPanel({ entity, kind }) {
         )}
       </div>
 
-      <p className="mt-1 text-xs text-slate-500">Vet this choice before you commit.</p>
+      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Vet this choice before you commit.</p>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         {/* Contact + site */}
@@ -85,7 +85,7 @@ export default function ResearchPanel({ entity, kind }) {
       </div>
 
       {r.verifyNote && (
-        <p className="mt-3 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
+        <p className="mt-3 rounded bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs text-amber-800 dark:text-amber-200">
           Note: {r.verifyNote}
         </p>
       )}

@@ -4,8 +4,8 @@ import { Eye, EyeOff, FileCheck } from 'lucide-react';
 export default function ReceiptCard({ receipt }) {
   if (!receipt) return null;
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="flex items-center gap-2 font-semibold text-slate-800">
+    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+      <div className="flex items-center gap-2 font-semibold text-slate-800 dark:text-slate-100">
         <FileCheck size={16} className="text-emerald-600" /> {receipt.title}
       </div>
       <div className="mt-1 text-xs text-slate-400">Receipt {receipt.receiptId} · commitment {receipt.commitment}</div>
@@ -14,7 +14,7 @@ export default function ReceiptCard({ receipt }) {
           <div className="flex items-center gap-1 text-xs font-semibold uppercase text-emerald-600">
             <Eye size={14} /> Discloses
           </div>
-          <ul className="mt-1 list-inside list-disc text-sm text-slate-700">
+          <ul className="mt-1 list-inside list-disc text-sm text-slate-700 dark:text-slate-200">
             {receipt.discloses.map((d) => <li key={d}>{d}</li>)}
           </ul>
         </div>
@@ -22,7 +22,7 @@ export default function ReceiptCard({ receipt }) {
           <div className="flex items-center gap-1 text-xs font-semibold uppercase text-rose-500">
             <EyeOff size={14} /> Hides
           </div>
-          <ul className="mt-1 list-inside list-disc text-sm text-slate-700">
+          <ul className="mt-1 list-inside list-disc text-sm text-slate-700 dark:text-slate-200">
             {receipt.hides.map((h) => <li key={h}>{h}</li>)}
           </ul>
         </div>

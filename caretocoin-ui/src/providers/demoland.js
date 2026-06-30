@@ -9,6 +9,12 @@ import { getOnRamp } from '../config/onRamps';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Mask a wallet id for display on receipts (keep ends, hide the middle).
+const maskWallet = (w) => {
+  const s = String(w || '');
+  return s.length > 12 ? `${s.slice(0, 9)}…${s.slice(-3)}` : s;
+};
+
 // Tiny non-crypto hash, for demo commitment/receipt ids only.
 function demoHash(input) {
   let h = 0x811c9dc5;
@@ -177,5 +183,51 @@ export const moderationProvider = {
       };
     }
     return { allowed: true, categories: [], reason: 'Dedication passed Ai moderation.' };
+  },
+};
+
+// --- Tax receipts: issue a donor-side tax receipt for a donation. This is the
+// donor -> tax-authority selective disclosure rendered as a saveable document.
+// Issued for BOTH private and public donations (the donor always needs their
+// own record). In realDeal it is derived from the on-chain commitment + proof.
+export const taxReceiptProvider = {
+  async issue(donationResult, { donor, org, campaign, displayName }) {
+    await wait(300);
+    const now = new Date();
+    const amountUsd =
+      donationResult.visibility === 'public'
+        ? donationResult.public.amountUsd
+        : donationResult.private.amountUsd;
+    return {
+      receiptId: `C2C-${donationResult.commitment.slice(2, 10)}`.toUpperCase(),
+      issuedAt: now.toISOString(),
+      taxYear: now.getUTCFullYear(),
+      donee: {
+        name: org?.name || 'Relief organization',
+        website: org?.website || null,
+        taxId: org?.taxId || null, // unknown in demo; verify before real use
+        country: org?.country || null,
+      },
+      donor: {
+        walletRef: maskWallet(donor.walletId),
+        displayName: displayName || (donationResult.visibility === 'public' ? 'Public donor' : 'Anonymous'),
+        jurisdiction: donor.jurisdiction,
+      },
+      donation: {
+        amountUsd,
+        currency: 'USD',
+        asset: 'USDC',
+        kind: 'crypto',
+        visibility: donationResult.visibility,
+        date: now.toISOString().slice(0, 10),
+      },
+      commitment: donationResult.commitment,
+      proofRef: donationResult.screenProof || null,
+      campaign: { id: campaign.id, title: campaign.title },
+      statement: 'No goods or services were provided in exchange for this contribution.',
+      disclaimer:
+        'demoLand sample receipt — not tax advice. In realDeal this is derived from an ' +
+        'on-chain commitment and a selective-disclosure proof, and the donee tax ID is verified.',
+    };
   },
 };

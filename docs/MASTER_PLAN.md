@@ -51,6 +51,10 @@ Every donation can be made **privately** (shielded: donor identity, amount, and 
 
 Donors may attach an optional **dedication** ("In memory of...", a message of support). Because a public dedication is published on-chain, it passes an **Ai moderation gate** first (screening for violence/threats, hate speech, illicit-finance/sanctions-evasion language, drugs/weapons, sanctioned-entity promotion, spam/links, and doxxing). demoLand uses a transparent heuristic classifier (`moderationProvider.screenDedication`); realDeal calls a real moderation model behind the same interface. A blocked dedication halts the donation before any commitment is made.
 
+### Tax receipts (wallet-scoped)
+
+Every successful donation (private or public) issues a **tax receipt** for the donor and saves it **per wallet**. The receipt is the donor -> tax-authority selective disclosure rendered as a saveable file (printable HTML + machine-readable JSON), including donee, amount, date, tax year, on-chain commitment, compliance-proof reference, and the "no goods or services provided" statement. demoLand persists receipts to `localStorage` keyed by wallet (`taxReceiptProvider.issue` + `lib/receiptStore`); realDeal derives the receipt from the on-chain commitment + proof, with a verified donee tax ID. Donors can re-download any past receipt from the "Your saved tax receipts" panel.
+
 ---
 
 ## 2. SentinelDID coordination layer
