@@ -45,6 +45,12 @@ Two viable models, to decide later:
 
 Recommendation: ship the **bridge model** as the GoFundMe arm; revisit native campaigns once the relief and political arms are proven.
 
+### Public vs private donations + dedications
+
+Every donation can be made **privately** (shielded: donor identity, amount, and dedication stay off the public ledger) or **publicly** (transparent: a donor-chosen display name, amount, and dedication are published to the campaign wall). Sanctions screening runs **either way**; only the disclosure differs. This maps directly to Midnight's shielded/unshielded axis.
+
+Donors may attach an optional **dedication** ("In memory of...", a message of support). Because a public dedication is published on-chain, it passes an **Ai moderation gate** first (screening for violence/threats, hate speech, illicit-finance/sanctions-evasion language, drugs/weapons, sanctioned-entity promotion, spam/links, and doxxing). demoLand uses a transparent heuristic classifier (`moderationProvider.screenDedication`); realDeal calls a real moderation model behind the same interface. A blocked dedication halts the donation before any commitment is made.
+
 ---
 
 ## 2. SentinelDID coordination layer

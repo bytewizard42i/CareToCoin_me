@@ -41,3 +41,8 @@ export const offRampProvider = {
   // TODO: integrate chosen partner (MVGA/Coco/CryptoCash) payout API.
   async estimate() { notWired('offRampProvider.estimate'); },
 };
+
+export const moderationProvider = {
+  // TODO: call a real Ai moderation model/API to screen public dedications.
+  async screenDedication() { notWired('moderationProvider.screenDedication'); },
+};

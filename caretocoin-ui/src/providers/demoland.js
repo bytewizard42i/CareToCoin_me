@@ -68,16 +68,26 @@ export const onRampProvider = {
 
 // --- Donation core: create a private commitment, then a selective-disclosure receipt.
 export const donationProvider = {
-  async makeDonation({ donor, orgId, amountUsd, campaign, screenProof, zoneProof }) {
+  async makeDonation({ donor, orgId, amountUsd, campaign, screenProof, zoneProof, visibility = 'private', displayName, dedication }) {
     await wait(600);
     const nonce = Math.random().toString(36).slice(2);
     const commitment = demoHash(`${donor.walletId}|${orgId}|${amountUsd}|${nonce}`);
+    const isPublic = visibility === 'public';
     return {
       commitment,
-      // Public-by-design fields the chain would learn:
-      public: { campaignId: campaign.id, orgId, compliant: true },
+      visibility,
+      // Public-by-design fields the chain would learn. In PUBLIC mode the donor
+      // chooses to also disclose a display name, amount, and a (moderated) dedication.
+      public: {
+        campaignId: campaign.id,
+        orgId,
+        compliant: true,
+        ...(isPublic ? { donorName: displayName || 'Anonymous', amountUsd, dedication: dedication || null } : {}),
+      },
       // Private fields kept off the public ledger (shown for teaching only):
-      private: { donor: donor.label, amountUsd, jurisdiction: donor.jurisdiction },
+      private: isPublic
+        ? { realDonor: donor.label, jurisdiction: donor.jurisdiction }
+        : { donor: donor.label, amountUsd, jurisdiction: donor.jurisdiction, dedication: dedication || null },
       screenProof,
       zoneProof,
       createdAt: new Date().toISOString(),
@@ -133,5 +143,39 @@ export const offRampProvider = {
       etaMinutes: r.id === 'mvga' ? 1 : r.id === 'coco-wallet' ? 5 : 30,
       amountUsd,
     };
+  },
+};
+
+// --- Ai moderation: screen a public dedication for illicit/unsuitable content.
+// demoLand uses a transparent heuristic classifier. realDeal calls a real
+// moderation model/API behind the same interface. This is a SAFETY gate: a
+// public dedication is published, so it must be screened before it goes on-chain.
+const DEDICATION_RULES = [
+  { category: 'violence / threats', rx: /\b(kill|murder|bomb|behead|shoot|massacre|terror)\w*/i },
+  { category: 'hate speech', rx: /\b(n[i1]gger|f[a@]gg?ot|k[i1]ke|sp[i1]c|retard)\w*/i },
+  { category: 'illicit finance', rx: /\b(launder|money[\s-]*launder|evade\s*sanctions|bypass\s*ofac|hawala\s*for)\w*/i },
+  { category: 'drugs / weapons', rx: /\b(heroin|fentanyl|cocaine|meth|buy\s*guns|arms\s*deal)\w*/i },
+  { category: 'sanctioned-entity promotion', rx: /\b(long\s*live\s*the\s*regime|fund\s*the\s*cartel|viva\s*el\s*r[eé]gimen)\w*/i },
+  { category: 'spam / links', rx: /(https?:\/\/|t\.me\/|telegram\.me|whatsapp\s*\+?\d|\bbuy\s*now\b)/i },
+  { category: 'personal data (doxxing)', rx: /\b(\d{3}-\d{2}-\d{4}|passport\s*no|\bcedula\b\s*\d)/i },
+];
+
+export const moderationProvider = {
+  async screenDedication(text) {
+    await wait(550); // pretend model inference
+    const value = (text || '').trim();
+    if (!value) return { allowed: true, empty: true };
+    if (value.length > 280) {
+      return { allowed: false, categories: ['too long'], reason: 'Dedication exceeds 280 characters.' };
+    }
+    const hits = DEDICATION_RULES.filter((r) => r.rx.test(value)).map((r) => r.category);
+    if (hits.length) {
+      return {
+        allowed: false,
+        categories: hits,
+        reason: `Flagged as ${hits.join(', ')}. Please revise your dedication.`,
+      };
+    }
+    return { allowed: true, categories: [], reason: 'Dedication passed Ai moderation.' };
   },
 };

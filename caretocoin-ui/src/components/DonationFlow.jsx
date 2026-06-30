@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { ShieldCheck, ShieldX, MapPin, Loader2, HeartHandshake, RotateCcw } from 'lucide-react';
+import { ShieldCheck, ShieldX, MapPin, Loader2, RotateCcw, Globe, Lock, MessageSquare, Sparkles, AlertTriangle } from 'lucide-react';
 import { enabledReliefOrgs } from '../config/reliefOrgs';
 import { enabledOnRamps } from '../config/onRamps';
 import { enabledOffRamps } from '../config/offRamps';
 import { demoDonors } from '../data/donors';
-import { compliance, reliefOrgs as orgProvider, onRamp, donation, offRamp } from '../providers';
+import { compliance, reliefOrgs as orgProvider, onRamp, donation, offRamp, moderation } from '../providers';
 import ChoiceGrid from './ChoiceGrid';
 import ReceiptCard from './ReceiptCard';
 
@@ -14,6 +14,10 @@ export default function DonationFlow({ campaign }) {
   const [onRampId, setOnRampId] = useState(enabledOnRamps()[0]?.id);
   const [offRampId, setOffRampId] = useState(enabledOffRamps()[0]?.id);
   const [amount, setAmount] = useState(100);
+  const [visibility, setVisibility] = useState('private');
+  const [displayName, setDisplayName] = useState('');
+  const [dedication, setDedication] = useState('');
+  const [moderationResult, setModerationResult] = useState(null);
 
   const [busy, setBusy] = useState(false);
   const [screen, setScreen] = useState(null);
@@ -27,13 +31,20 @@ export default function DonationFlow({ campaign }) {
 
   const reset = () => {
     setScreen(null); setZone(null); setDonationResult(null);
-    setReceipts([]); setPayout(null); setReclaimed(null);
+    setReceipts([]); setPayout(null); setReclaimed(null); setModerationResult(null);
   };
 
-  async function run() {
+  async function run(mode) {
     reset();
+    setVisibility(mode);
     setBusy(true);
     try {
+      // 0. Ai moderation of the dedication (gate: a dedication must pass before anything else).
+      if (dedication.trim()) {
+        const m = await moderation.screenDedication(dedication);
+        setModerationResult(m);
+        if (!m.allowed) return;
+      }
       // 1. Sanctions screening (ZK non-membership)
       const s = await compliance.screenDonor(donor);
       setScreen(s);
@@ -50,6 +61,7 @@ export default function DonationFlow({ campaign }) {
       // 4. Commit the private donation
       const d = await donation.makeDonation({
         donor, orgId, amountUsd: Number(amount), campaign, screenProof: s.proof, zoneProof: z.proof,
+        visibility: mode, displayName, dedication: dedication.trim() || null,
       });
       setDonationResult(d);
       // 5. Selective-disclosure receipts
@@ -106,12 +118,52 @@ export default function DonationFlow({ campaign }) {
       <ChoiceGrid title="Recipient cash-out (off-ramp)" items={enabledOffRamps()} kind="offramp"
         selectedId={offRampId} onSelect={setOffRampId} renderMeta={(o) => `${o.delivery} · ${o.bestFor}`} />
 
-      {/* Action */}
-      <button onClick={run} disabled={busy}
-        className="mt-8 flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
-        {busy ? <Loader2 size={18} className="animate-spin" /> : <HeartHandshake size={18} />}
-        {busy ? 'Proving + committing…' : 'Donate privately'}
-      </button>
+      {/* Dedication (optional, Ai-moderated; published only if you donate publicly) */}
+      <section className="mt-6">
+        <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <MessageSquare size={14} /> Dedication (optional)
+        </h3>
+        <textarea value={dedication} onChange={(e) => setDedication(e.target.value)} maxLength={400} rows={2}
+          placeholder='e.g. "In memory of those lost in La Guaira. Stay strong, Venezuela."'
+          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        <div className="mt-1 flex items-center justify-between text-xs text-slate-400">
+          <span className="flex items-center gap-1"><Sparkles size={12} /> Screened by Ai moderation before publishing.</span>
+          <span>{dedication.length}/280</span>
+        </div>
+        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="Public display name (optional, used only for public donations)"
+          className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+      </section>
+
+      {/* Ai moderation feedback */}
+      {moderationResult && !moderationResult.allowed && (
+        <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          <div className="flex items-center gap-2 font-semibold"><AlertTriangle size={16} /> Dedication blocked by Ai moderation</div>
+          <p className="mt-1">{moderationResult.reason}</p>
+        </div>
+      )}
+      {moderationResult && moderationResult.allowed && !moderationResult.empty && (
+        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">
+          <Sparkles size={12} className="mr-1 inline" /> {moderationResult.reason}
+        </div>
+      )}
+
+      {/* Actions: private vs public */}
+      <div className="mt-8 grid gap-3 sm:grid-cols-2">
+        <button onClick={() => run('private')} disabled={busy}
+          className="flex items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
+          {busy && visibility === 'private' ? <Loader2 size={18} className="animate-spin" /> : <Lock size={18} />}
+          Donate privately
+        </button>
+        <button onClick={() => run('public')} disabled={busy}
+          className="flex items-center justify-center gap-2 rounded-xl border-2 border-indigo-600 bg-white py-3 font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-60">
+          {busy && visibility === 'public' ? <Loader2 size={18} className="animate-spin" /> : <Globe size={18} />}
+          Donate publicly
+        </button>
+      </div>
+      <p className="mt-2 text-center text-xs text-slate-400">
+        Private hides your identity, amount, and dedication. Public publishes your display name, amount, and dedication on the campaign wall. Sanctions screening runs either way.
+      </p>
 
       {/* Results */}
       {screen && (
@@ -142,16 +194,32 @@ export default function DonationFlow({ campaign }) {
 
       {donationResult && (
         <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
-          <div className="font-semibold text-slate-800">Private donation committed</div>
+          <div className="flex items-center gap-2 font-semibold text-slate-800">
+            {donationResult.visibility === 'public' ? <Globe size={16} className="text-indigo-600" /> : <Lock size={16} className="text-indigo-600" />}
+            {donationResult.visibility === 'public' ? 'Public donation committed' : 'Private donation committed'}
+          </div>
           <div className="mt-1 text-xs text-slate-400">Commitment {donationResult.commitment}</div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 text-sm">
             <div>
               <div className="text-xs font-semibold uppercase text-emerald-600">Public on-chain</div>
-              <div className="text-slate-700">Campaign, recipient org, compliant=true</div>
+              {donationResult.visibility === 'public' ? (
+                <div className="text-slate-700">
+                  {donationResult.public.donorName} gave ${donationResult.public.amountUsd}
+                  {donationResult.public.dedication && (
+                    <p className="mt-1 italic text-slate-600">“{donationResult.public.dedication}”</p>
+                  )}
+                </div>
+              ) : (
+                <div className="text-slate-700">Campaign, recipient org, compliant=true</div>
+              )}
             </div>
             <div>
               <div className="text-xs font-semibold uppercase text-rose-500">Private (off-ledger)</div>
-              <div className="text-slate-700">Donor, amount (${donationResult.private.amountUsd}), location</div>
+              <div className="text-slate-700">
+                {donationResult.visibility === 'public'
+                  ? 'Real wallet identity stays shielded; only your chosen name is public.'
+                  : `Donor, amount ($${donationResult.private.amountUsd}), location, dedication`}
+              </div>
             </div>
           </div>
         </div>
