@@ -1,0 +1,216 @@
+pragma language_version >= 0.16 && <= 0.23;
+
+import CompactStandardLibrary;
+
+// ═══════════════════════════════════════════════════════════════
+// CareToCoin — Privacy-Preserving Charitable Donations
+// Phase 1: Core Contract (charity registry, donation flow, screening)
+//
+// Migration from Cardano/Aiken to Midnight/Compact.
+// Privacy model: commitments + status bits on-chain, raw facts off-chain.
+// ═══════════════════════════════════════════════════════════════
+
+// ─── Enums ────────────────────────────────────────────────
+
+export enum CharityStatus {
+  Pending,
+  Verified,
+  Suspended,
+}
+
+// ─── Structs ──────────────────────────────────────────────
+
+export struct CharityRecord {
+  status: CharityStatus,
+  kycz_commitment: Bytes<32>,
+  total_received: Uint<64>,
+  donation_count: Uint<64>,
+}
+
+export struct DonationCommitment {
+  charity_id: Bytes<32>,
+  amount: Uint<64>,
+  donor_nullifier: Bytes<32>,
+  is_compliant: Boolean,
+  reclaim_deadline: Uint<64>,
+}
+
+// ─── Ledgers ──────────────────────────────────────────────
+
+export ledger charities: Map<Bytes<32, CharityRecord>;
+export ledger donations: Map<Bytes<32, DonationCommitment>;
+export ledger banned_wallets: Set<Bytes<32>;
+export ledger donation_counter: Counter;
+export ledger admin: Bytes<32>;
+
+// ─── Witnesses ────────────────────────────────────────────
+
+witness get_admin_key(): Bytes<32>;
+witness get_donor_nullifier(secret: Bytes<32>): Bytes<32>;
+witness get_donor_wallet_hash(): Bytes<32>;
+witness get_kycz_charity_proof(charity_id: Bytes<32>): Bytes<32>;
+witness get_jurisdiction_proof(is_eligible: Boolean): Bytes<32>;
+witness get_donation_secret(): Bytes<32>;
+
+// ─── Circuits: Charity Management ─────────────────────────
+
+export circuit register_charity(
+  charity_id: Bytes<32>,
+  kycz_commitment: Bytes<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can register charities");
+  assert(disclose(!charities.member(charity_id)), "Charity already registered");
+
+  charities.insert(charity_id, CharityRecord {
+    status: Pending,
+    kycz_commitment: kycz_commitment,
+    total_received: 0 as Uint<64>,
+    donation_count: 0 as Uint<64>,
+  });
+}
+
+export circuit verify_charity(charity_id: Bytes<32>): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can verify charities");
+  assert(disclose(charities.member(charity_id)), "Charity not found");
+
+  const record = charities.lookup(charity_id);
+  charities.insert(charity_id, CharityRecord {
+    status: Verified,
+    kycz_commitment: record.kycz_commitment,
+    total_received: record.total_received,
+    donation_count: record.donation_count,
+  });
+}
+
+export circuit suspend_charity(charity_id: Bytes<32>): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can suspend charities");
+  assert(disclose(charities.member(charity_id)), "Charity not found");
+
+  const record = charities.lookup(charity_id);
+  charities.insert(charity_id, CharityRecord {
+    status: Suspended,
+    kycz_commitment: record.kycz_commitment,
+    total_received: record.total_received,
+    donation_count: record.donation_count,
+  });
+}
+
+// ─── Circuits: Banned Wallet Management ───────────────────
+
+export circuit add_banned_wallet(wallet_hash: Bytes<32>): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can ban wallets");
+  banned_wallets.insert(wallet_hash);
+}
+
+export circuit remove_banned_wallet(wallet_hash: Bytes<32>): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can unban wallets");
+  banned_wallets.remove(wallet_hash);
+}
+
+// ─── Circuits: Donation Flow ──────────────────────────────
+
+export circuit make_donation(
+  charity_id: Bytes<32>,
+  amount: Uint<64>,
+  is_eligible: Boolean,
+  reclaim_deadline: Uint<64>,
+): Bytes<32> {
+  // Verify charity exists and is verified
+  assert(disclose(charities.member(charity_id)), "Charity not found");
+  const charity = charities.lookup(charity_id);
+  assert(disclose(charity.status == Verified), "Charity not verified");
+
+  // Screen donor wallet against banned set
+  const wallet_hash = get_donor_wallet_hash();
+  const is_banned = banned_wallets.member(wallet_hash);
+  assert(disclose(!is_banned), "Donor wallet is banned");
+
+  // Generate donation commitment
+  const secret = get_donation_secret();
+  const donor_nullifier = get_donor_nullifier(secret);
+  const donation_id = persistentHash<Vector<3, Bytes<32>>>([
+    charity_id,
+    donor_nullifier,
+    secret,
+  ]);
+
+  // Determine compliance
+  const compliant = is_eligible && !is_banned;
+
+  // Store donation commitment
+  donations.insert(donation_id, DonationCommitment {
+    charity_id: charity_id,
+    amount: amount,
+    donor_nullifier: donor_nullifier,
+    is_compliant: compliant,
+    reclaim_deadline: reclaim_deadline,
+  });
+
+  // Update charity totals (public for transparency)
+  const new_total = (charity.total_received + amount) as Uint<64>;
+  const new_count = (charity.donation_count + 1 as Uint<64>) as Uint<64>;
+  charities.insert(charity_id, CharityRecord {
+    status: charity.status,
+    kycz_commitment: charity.kycz_commitment,
+    total_received: new_total,
+    donation_count: new_count,
+  });
+
+  donation_counter.increment(1);
+
+  return donation_id;
+}
+
+// ─── Circuits: Reclaim ────────────────────────────────────
+
+export circuit reclaim_donation(
+  donation_id: Bytes<32>,
+  current_time: Uint<64>,
+): [] {
+  assert(disclose(donations.member(donation_id)), "Donation not found");
+
+  const donation = donations.lookup(donation_id);
+  assert(disclose(!donation.is_compliant), "Donation is compliant — cannot reclaim");
+  assert(disclose(current_time < donation.reclaim_deadline), "Reclaim window expired");
+
+  // Remove donation from ledger
+  donations.remove(donation_id);
+
+  // Decrement charity total
+  const charity = charities.lookup(donation.charity_id);
+  const new_total = (charity.total_received - donation.amount) as Uint<64>;
+  const new_count = (charity.donation_count - 1 as Uint<64>) as Uint<64>;
+  charities.insert(donation.charity_id, CharityRecord {
+    status: charity.status,
+    kycz_commitment: charity.kycz_commitment,
+    total_received: new_total,
+    donation_count: new_count,
+  });
+}
+
+// ─── Circuits: Query (read-only) ──────────────────────────
+
+export circuit get_charity_status(charity_id: Bytes<32>): CharityStatus {
+  assert(disclose(charities.member(charity_id)), "Charity not found");
+  const record = charities.lookup(charity_id);
+  return record.status;
+}
+
+export circuit get_charity_total(charity_id: Bytes<32>): Uint<64> {
+  assert(disclose(charities.member(charity_id)), "Charity not found");
+  const record = charities.lookup(charity_id);
+  return record.total_received;
+}
+
+export circuit get_donation_count(): Uint<64> {
+  return donation_counter.read();
+}
+
+export circuit is_wallet_banned(wallet_hash: Bytes<32>): Boolean {
+  return banned_wallets.member(wallet_hash);
+}
