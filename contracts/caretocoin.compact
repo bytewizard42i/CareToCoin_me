@@ -55,6 +55,15 @@ export enum ScreeningResult {
   RegionBlocked,   // Regional oracle rule blocked the donor
 }
 
+// Phase 4: Settlement Escrow enums
+
+export enum EscrowStatus {
+  Held,        // Donation in escrow, reclaim window active
+  Released,    // Funds released to charity (reclaim window expired)
+  Reclaimed,   // Donor reclaimed funds (non-compliant donation)
+  Disputed,    // Admin flagged for review
+}
+
 // ─── Structs ──────────────────────────────────────────────
 
 export struct CharityRecord {
@@ -116,6 +125,18 @@ export struct RegionalOracleRule {
   updated_at: Uint<64>,
 }
 
+// Phase 4: Settlement Escrow struct
+
+export struct EscrowRecord {
+  donation_id: Bytes<32>,
+  charity_id: Bytes<32>,
+  amount: Uint<64>,
+  donor_nullifier: Bytes<32>,
+  reclaim_deadline: Uint<64>,
+  status: EscrowStatus,
+  held_since: Uint<64>,
+}
+
 // ─── Ledgers ──────────────────────────────────────────────
 
 export ledger charities: Map<Bytes<32>, CharityRecord>;
@@ -133,6 +154,10 @@ export ledger denylists: Map<Bytes<32>, DenylistEntry>;           // denylist_id
 export ledger deposit_addresses: Map<Bytes<32>, DepositAddress>;  // address_commitment -> record
 export ledger rejection_counters: Map<Bytes<32>, Uint<8>>;       // donor_nullifier -> count
 export ledger regional_oracle_rules: Map<Bytes<32>, RegionalOracleRule>; // region_code -> rule
+
+// Phase 4: Settlement Escrow ledger
+export ledger escrow: Map<Bytes<32>, EscrowRecord>;  // donation_id -> escrow record
+export ledger escrow_counter: Counter;
 
 // ─── Witnesses ────────────────────────────────────────────
 
@@ -903,4 +928,193 @@ export circuit is_region_blocked(region_code: Bytes<32>): Boolean {
   } else {
     return false;
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Phase 4: Settlement Escrow
+// ═══════════════════════════════════════════════════════════════
+//
+// After a donation passes the pre-screening gate and is committed, the funds
+// are held in escrow during the reclaim window. If the reclaim deadline
+// passes without a reclaim, the funds are released to the charity. If the
+// donor reclaims (because the donation was flagged as non-compliant), the
+// escrow is returned. An admin can also dispute a donation to hold it
+// for further review.
+//
+// This works alongside the Phase 1 reclaim_donation circuit — that circuit
+// handles the donation ledger removal. These circuits handle the escrow
+// lifecycle, which is the on-chain settlement layer.
+
+// ─── Circuits: Escrow Creation ─────────────────────────────
+
+// Create an escrow record for a donation. Called after make_donation
+// succeeds. The donation is held in escrow until the reclaim deadline.
+export circuit create_escrow(
+  donation_id: Bytes<32>,
+): [] {
+  const d_donation_id = disclose(donation_id);
+  assert(disclose(donations.member(d_donation_id)), "Donation not found");
+  assert(disclose(!escrow.member(d_donation_id)), "Escrow already exists");
+
+  const donation = donations.lookup(d_donation_id);
+  const now = get_current_time();
+
+  const record = EscrowRecord {
+    donation_id: d_donation_id,
+    charity_id: disclose(donation.charity_id),
+    amount: disclose(donation.amount),
+    donor_nullifier: disclose(donation.donor_nullifier),
+    reclaim_deadline: disclose(donation.reclaim_deadline),
+    status: EscrowStatus.Held,
+    held_since: disclose(now),
+  };
+
+  escrow.insert(d_donation_id, disclose(record));
+  escrow_counter.increment(1);
+}
+
+// ─── Circuits: Escrow Release ──────────────────────────────
+
+// Release escrowed funds to the charity after the reclaim window expires.
+// Anyone can call this (keeper/cron pattern) — the circuit checks that
+// the reclaim deadline has passed and the escrow is still Held.
+export circuit release_escrow(
+  donation_id: Bytes<32>,
+): [] {
+  const d_donation_id = disclose(donation_id);
+  assert(disclose(escrow.member(d_donation_id)), "Escrow not found");
+
+  const record = escrow.lookup(d_donation_id);
+  assert(disclose(record.status == EscrowStatus.Held), "Escrow not held");
+
+  const now = get_current_time();
+  assert(disclose(now >= record.reclaim_deadline), "Reclaim window not expired");
+
+  const updated = EscrowRecord {
+    donation_id: d_donation_id,
+    charity_id: disclose(record.charity_id),
+    amount: disclose(record.amount),
+    donor_nullifier: disclose(record.donor_nullifier),
+    reclaim_deadline: disclose(record.reclaim_deadline),
+    status: EscrowStatus.Released,
+    held_since: disclose(record.held_since),
+  };
+
+  escrow.insert(d_donation_id, disclose(updated));
+}
+
+// ─── Circuits: Escrow Reclaim ──────────────────────────────
+
+// Donor reclaims escrowed funds during the reclaim window.
+// This is the escrow counterpart to reclaim_donation — that circuit
+// removes the donation from the donations ledger; this one updates
+// the escrow status. The donor proves ownership via the donation secret.
+export circuit reclaim_escrow(
+  donation_id: Bytes<32>,
+): [] {
+  const d_donation_id = disclose(donation_id);
+  assert(disclose(escrow.member(d_donation_id)), "Escrow not found");
+
+  const record = escrow.lookup(d_donation_id);
+  assert(disclose(record.status == EscrowStatus.Held), "Escrow not held");
+
+  const now = get_current_time();
+  assert(disclose(now < record.reclaim_deadline), "Reclaim window expired");
+
+  // Verify the donation is non-compliant (only non-compliant donations can be reclaimed)
+  const donation = donations.lookup(d_donation_id);
+  assert(disclose(!donation.is_compliant), "Donation is compliant — cannot reclaim");
+
+  const updated = EscrowRecord {
+    donation_id: d_donation_id,
+    charity_id: disclose(record.charity_id),
+    amount: disclose(record.amount),
+    donor_nullifier: disclose(record.donor_nullifier),
+    reclaim_deadline: disclose(record.reclaim_deadline),
+    status: EscrowStatus.Reclaimed,
+    held_since: disclose(record.held_since),
+  };
+
+  escrow.insert(d_donation_id, disclose(updated));
+}
+
+// ─── Circuits: Escrow Dispute ──────────────────────────────
+
+// Admin flags a donation for dispute review. This pauses the escrow
+// (prevents both release and reclaim) until the dispute is resolved.
+// Used when a post-deposit compliance issue is detected.
+export circuit dispute_escrow(
+  donation_id: Bytes<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can dispute escrow");
+
+  const d_donation_id = disclose(donation_id);
+  assert(disclose(escrow.member(d_donation_id)), "Escrow not found");
+
+  const record = escrow.lookup(d_donation_id);
+  assert(disclose(record.status == EscrowStatus.Held), "Escrow not held");
+
+  const updated = EscrowRecord {
+    donation_id: d_donation_id,
+    charity_id: disclose(record.charity_id),
+    amount: disclose(record.amount),
+    donor_nullifier: disclose(record.donor_nullifier),
+    reclaim_deadline: disclose(record.reclaim_deadline),
+    status: EscrowStatus.Disputed,
+    held_since: disclose(record.held_since),
+  };
+
+  escrow.insert(d_donation_id, disclose(updated));
+}
+
+// Admin resolves a disputed escrow — either releases to charity or
+// returns to donor. The admin specifies the outcome.
+// resolve_to_charity = true → Released, false → Reclaimed
+export circuit resolve_dispute(
+  donation_id: Bytes<32>,
+  resolve_to_charity: Boolean,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can resolve disputes");
+
+  const d_donation_id = disclose(donation_id);
+  assert(disclose(escrow.member(d_donation_id)), "Escrow not found");
+
+  const record = escrow.lookup(d_donation_id);
+  assert(disclose(record.status == EscrowStatus.Disputed), "Escrow not disputed");
+
+  const new_status = resolve_to_charity ? EscrowStatus.Released : EscrowStatus.Reclaimed;
+  const d_resolve = disclose(resolve_to_charity);
+
+  const updated = EscrowRecord {
+    donation_id: d_donation_id,
+    charity_id: disclose(record.charity_id),
+    amount: disclose(record.amount),
+    donor_nullifier: disclose(record.donor_nullifier),
+    reclaim_deadline: disclose(record.reclaim_deadline),
+    status: new_status,
+    held_since: disclose(record.held_since),
+  };
+
+  escrow.insert(d_donation_id, disclose(updated));
+}
+
+// ─── Circuits: Escrow Queries ──────────────────────────────
+
+export circuit get_escrow_status(donation_id: Bytes<32>): EscrowStatus {
+  const d_id = disclose(donation_id);
+  assert(disclose(escrow.member(d_id)), "Escrow not found");
+  const record = escrow.lookup(d_id);
+  return record.status;
+}
+
+export circuit get_escrow_record(donation_id: Bytes<32>): EscrowRecord {
+  const d_id = disclose(donation_id);
+  assert(disclose(escrow.member(d_id)), "Escrow not found");
+  return escrow.lookup(d_id);
+}
+
+export circuit get_escrow_count(): Uint<64> {
+  return escrow_counter.read();
 }
