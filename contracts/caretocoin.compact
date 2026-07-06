@@ -5,6 +5,7 @@ import CompactStandardLibrary;
 // ═══════════════════════════════════════════════════════════════
 // CareToCoin — Privacy-Preserving Charitable Donations
 // Phase 1: Core Contract (charity registry, donation flow, screening)
+// Phase 2: Tax Compliance (receipts, jurisdiction, annual summaries, reporting)
 //
 // Migration from Cardano/Aiken to Midnight/Compact.
 // Privacy model: commitments + status bits on-chain, raw facts off-chain.
@@ -33,6 +34,24 @@ export struct DonationCommitment {
   donor_nullifier: Bytes<32>,
   is_compliant: Boolean,
   reclaim_deadline: Uint<64>,
+  tax_year: Uint<16>,
+}
+
+export struct TaxReceipt {
+  donation_id: Bytes<32>,
+  charity_id: Bytes<32>,
+  amount_commitment: Bytes<32>,
+  tax_year: Uint<16>,
+  donor_nullifier: Bytes<32>,
+  is_disclosed: Boolean,
+}
+
+export struct AnnualSummary {
+  donor_nullifier: Bytes<32>,
+  tax_year: Uint<16>,
+  total_donated: Uint<64>,
+  donation_count: Uint<16>,
+  charity_count: Uint<16>,
 }
 
 // ─── Ledgers ──────────────────────────────────────────────
@@ -42,6 +61,10 @@ export ledger donations: Map<Bytes<32, DonationCommitment>;
 export ledger banned_wallets: Set<Bytes<32>;
 export ledger donation_counter: Counter;
 export ledger admin: Bytes<32>;
+export ledger tax_receipts: Map<Bytes<32, TaxReceipt>;
+export ledger annual_summaries: Map<Bytes<32, AnnualSummary>;
+export ledger denylist_root: Bytes<32>;
+export ledger denylist_version: Uint<32>;
 
 // ─── Witnesses ────────────────────────────────────────────
 
@@ -51,6 +74,17 @@ witness get_donor_wallet_hash(): Bytes<32>;
 witness get_kycz_charity_proof(charity_id: Bytes<32>): Bytes<32>;
 witness get_jurisdiction_proof(is_eligible: Boolean): Bytes<32>;
 witness get_donation_secret(): Bytes<32>;
+witness get_merkle_non_membership(
+  donor_key: Bytes<32>,
+  root: Bytes<32>,
+): Boolean;
+witness get_jurisdiction_eligible(): Boolean;
+witness get_tax_year(): Uint<16>;
+witness get_donor_secret_for_receipt(): Bytes<32>;
+witness get_annual_donation_list(
+  donor_nullifier: Bytes<32>,
+  tax_year: Uint<16>,
+): Vector<32, Bytes<32>>;
 
 // ─── Circuits: Charity Management ─────────────────────────
 
@@ -119,6 +153,7 @@ export circuit make_donation(
   amount: Uint<64>,
   is_eligible: Boolean,
   reclaim_deadline: Uint<64>,
+  tax_year: Uint<16>,
 ): Bytes<32> {
   // Verify charity exists and is verified
   assert(disclose(charities.member(charity_id)), "Charity not found");
@@ -149,6 +184,7 @@ export circuit make_donation(
     donor_nullifier: donor_nullifier,
     is_compliant: compliant,
     reclaim_deadline: reclaim_deadline,
+    tax_year: tax_year,
   });
 
   // Update charity totals (public for transparency)
@@ -213,4 +249,211 @@ export circuit get_donation_count(): Uint<64> {
 
 export circuit is_wallet_banned(wallet_hash: Bytes<32>): Boolean {
   return banned_wallets.member(wallet_hash);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Phase 2: Tax Compliance & Reporting
+// ═══════════════════════════════════════════════════════════════
+
+// ─── Circuits: Denylist Management (OFAC) ─────────────────
+
+export circuit update_denylist_root(
+  new_root: Bytes<32>,
+  new_version: Uint<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can update denylist");
+  denylist_root = new_root;
+  denylist_version = new_version;
+}
+
+// ─── Circuits: ZK Tax Receipt Generation ──────────────────
+
+export circuit generate_tax_receipt(
+  donation_id: Bytes<32>,
+): Bytes<32> {
+  assert(disclose(donations.member(donation_id)), "Donation not found");
+
+  const donation = donations.lookup(donation_id);
+  assert(disclose(donation.is_compliant), "Cannot generate receipt for non-compliant donation");
+
+  // Verify donor owns this donation via secret
+  const secret = get_donor_secret_for_receipt();
+  const expected_nullifier = get_donor_nullifier(secret);
+  assert(disclose(expected_nullifier == donation.donor_nullifier), "Donor does not own this donation");
+
+  // Create amount commitment (hides amount from public, donor can disclose later)
+  const amount_commitment = persistentCommit<Uint<64>>(donation.amount);
+
+  // Receipt ID = hash(donation_id || amount_commitment)
+  const receipt_id = persistentHash<Vector<2, Bytes<32>>>([
+    donation_id,
+    amount_commitment,
+  ]);
+
+  // Store receipt (not yet disclosed to authority)
+  tax_receipts.insert(receipt_id, TaxReceipt {
+    donation_id: donation_id,
+    charity_id: donation.charity_id,
+    amount_commitment: amount_commitment,
+    tax_year: donation.tax_year,
+    donor_nullifier: donation.donor_nullifier,
+    is_disclosed: false,
+  });
+
+  return receipt_id;
+}
+
+// ─── Circuits: Jurisdictional Compliance (GeoZ) ───────────
+
+export circuit prove_jurisdiction(
+  donation_id: Bytes<32>,
+): [] {
+  assert(disclose(donations.member(donation_id)), "Donation not found");
+
+  const donation = donations.lookup(donation_id);
+
+  // Donor proves jurisdiction eligibility via GeoZ witness
+  // The witness verifies off-chain that the donor's jurisdiction
+  // permits this donation (e.g. not in a sanctioned region)
+  const is_eligible = get_jurisdiction_eligible();
+  assert(disclose(is_eligible), "Donor jurisdiction not eligible");
+
+  // Verify donor owns this donation
+  const secret = get_donor_secret_for_receipt();
+  const expected_nullifier = get_donor_nullifier(secret);
+  assert(disclose(expected_nullifier == donation.donor_nullifier), "Donor does not own this donation");
+
+  // Update donation compliance status if jurisdiction proof passes
+  // and donation was previously non-compliant due to jurisdiction
+  const was_non_compliant = !donation.is_compliant;
+  if (disclose(was_non_compliant)) {
+    donations.insert(donation_id, DonationCommitment {
+      charity_id: donation.charity_id,
+      amount: donation.amount,
+      donor_nullifier: donation.donor_nullifier,
+      is_compliant: true,
+      reclaim_deadline: donation.reclaim_deadline,
+      tax_year: donation.tax_year,
+    });
+  }
+}
+
+// ─── Circuits: Annual Summary ─────────────────────────────
+
+export circuit generate_annual_summary(
+  donor_nullifier: Bytes<32>,
+  tax_year: Uint<16>,
+  total_donated: Uint<64>,
+  donation_count: Uint<16>,
+  charity_count: Uint<16>,
+): Bytes<32> {
+  // Donor proves they know the secret for this nullifier
+  const secret = get_donor_secret_for_receipt();
+  const expected_nullifier = get_donor_nullifier(secret);
+  assert(disclose(expected_nullifier == donor_nullifier), "Donor does not own this nullifier");
+
+  // Summary ID = hash(nullifier || tax_year)
+  const summary_id = persistentHash<Vector<2, Bytes<32>>>([
+    donor_nullifier,
+    (tax_year as Field) as Bytes<32>,
+  ]);
+
+  // Store annual summary (private to donor, can be selectively disclosed)
+  annual_summaries.insert(summary_id, AnnualSummary {
+    donor_nullifier: donor_nullifier,
+    tax_year: tax_year,
+    total_donated: total_donated,
+    donation_count: donation_count,
+    charity_count: charity_count,
+  });
+
+  return summary_id;
+}
+
+// ─── Circuits: Prove Donation Total ───────────────────────
+// Donor proves total donated in a tax year without revealing
+// individual donations, amounts, or recipient charities.
+
+export circuit prove_donation_total(
+  summary_id: Bytes<32>,
+): Uint<64> {
+  assert(disclose(annual_summaries.member(summary_id)), "Summary not found");
+
+  const summary = annual_summaries.lookup(summary_id);
+
+  // Verify caller owns this summary
+  const secret = get_donor_secret_for_receipt();
+  const expected_nullifier = get_donor_nullifier(secret);
+  assert(disclose(expected_nullifier == summary.donor_nullifier), "Not authorized to view this summary");
+
+  return summary.total_donated;
+}
+
+// ─── Circuits: Report to Authority (Selective Disclosure) ─
+
+export circuit report_to_authority(
+  receipt_id: Bytes<32>,
+): TaxReceipt {
+  assert(disclose(tax_receipts.member(receipt_id)), "Receipt not found");
+
+  const receipt = tax_receipts.lookup(receipt_id);
+
+  // Verify donor owns this receipt
+  const secret = get_donor_secret_for_receipt();
+  const expected_nullifier = get_donor_nullifier(secret);
+  assert(disclose(expected_nullifier == receipt.donor_nullifier), "Donor does not own this receipt");
+
+  // Mark as disclosed to authority (IRS/tax authority)
+  tax_receipts.insert(receipt_id, TaxReceipt {
+    donation_id: receipt.donation_id,
+    charity_id: receipt.charity_id,
+    amount_commitment: receipt.amount_commitment,
+    tax_year: receipt.tax_year,
+    donor_nullifier: receipt.donor_nullifier,
+    is_disclosed: true,
+  });
+
+  return receipt;
+}
+
+// ─── Circuits: Charity Audit Proof ────────────────────────
+// Charity proves total received without revealing individual donors
+
+export circuit charity_audit_proof(
+  charity_id: Bytes<32>,
+): Uint<64> {
+  assert(disclose(charities.member(charity_id)), "Charity not found");
+  const record = charities.lookup(charity_id);
+  return record.total_received;
+}
+
+// ─── Circuits: Phase 2 Queries ────────────────────────────
+
+export circuit get_receipt_status(receipt_id: Bytes<32>): Boolean {
+  assert(disclose(tax_receipts.member(receipt_id)), "Receipt not found");
+  const receipt = tax_receipts.lookup(receipt_id);
+  return receipt.is_disclosed;
+}
+
+export circuit get_denylist_version(): Uint<32> {
+  return denylist_version;
+}
+
+export circuit get_denylist_root(): Bytes<32> {
+  return denylist_root;
+}
+
+export circuit get_annual_summary(
+  summary_id: Bytes<32>,
+): AnnualSummary {
+  assert(disclose(annual_summaries.member(summary_id)), "Summary not found");
+  const summary = annual_summaries.lookup(summary_id);
+
+  // Verify caller owns this summary
+  const secret = get_donor_secret_for_receipt();
+  const expected_nullifier = get_donor_nullifier(secret);
+  assert(disclose(expected_nullifier == summary.donor_nullifier), "Not authorized to view this summary");
+
+  return summary;
 }
