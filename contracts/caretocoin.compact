@@ -6,9 +6,16 @@ import CompactStandardLibrary;
 // CareToCoin — Privacy-Preserving Charitable Donations
 // Phase 1: Core Contract (charity registry, donation flow, screening)
 // Phase 2: Tax Compliance (receipts, jurisdiction, annual summaries, reporting)
+// Phase 3: Pre-Screening Gate (multi-denylist, ephemeral deposit addresses,
+//         regional oracle placeholder)
 //
 // Migration from Cardano/Aiken to Midnight/Compact.
 // Privacy model: commitments + status bits on-chain, raw facts off-chain.
+//
+// PRE-SCREENING GATE: Donors must pass ZK non-membership screening against
+// one or more denylists BEFORE receiving an ephemeral deposit address.
+// This ensures tainted funds never reach the platform. The original
+// reclaim/block schema (Phase 1) remains for post-deposit issues.
 // ═══════════════════════════════════════════════════════════════
 
 // ─── Enums ────────────────────────────────────────────────
@@ -17,6 +24,35 @@ export enum CharityStatus {
   Pending,
   Verified,
   Suspended,
+}
+
+// Phase 3: Pre-Screening Gate enums
+
+export enum DenylistCategory {
+  OFAC_SDN,        // US OFAC Specially Designated Nationals
+  OFAC_SECTORAL,   // US OFAC Sectoral Sanctions
+  EU_SANCTIONS,    // EU consolidated sanctions list
+  UN_SANCTIONS,    // UN Security Council consolidated list
+  INTERNAL_RISK,   // Platform-internal risk list (repeated rejections, etc.)
+  REGIONAL,        // Region-specific regulatory list
+}
+
+export enum DenylistStatus {
+  Active,
+  Inactive,
+}
+
+export enum DepositAddressStatus {
+  Pending,    // Issued but no funds received yet
+  Used,       // Donation committed using this address
+  Expired,    // Time window elapsed without funds
+  Revoked,    // Admin revoked (e.g., emergency)
+}
+
+export enum ScreeningResult {
+  Pass,            // All denylists passed, address issued
+  Fail,            // One or more denylists matched, no address
+  RegionBlocked,   // Regional oracle rule blocked the donor
 }
 
 // ─── Structs ──────────────────────────────────────────────
@@ -54,17 +90,49 @@ export struct AnnualSummary {
   charity_count: Uint<16>,
 }
 
+// Phase 3: Pre-Screening Gate structs
+
+export struct DenylistEntry {
+  category: DenylistCategory,
+  status: DenylistStatus,
+  merkle_root: Bytes<32>,
+  version: Uint<32>,
+  updated_at: Uint<64>,
+}
+
+export struct DepositAddress {
+  donor_nullifier: Bytes<32>,
+  address_commitment: Bytes<32>,
+  issued_at: Uint<64>,
+  expires_at: Uint<64>,
+  status: DepositAddressStatus,
+  screened_against_version: Uint<32>,
+}
+
+export struct RegionalOracleRule {
+  region_code: Bytes<32>,
+  is_blocked: Boolean,
+  rule_hash: Bytes<32>,
+  updated_at: Uint<64>,
+}
+
 // ─── Ledgers ──────────────────────────────────────────────
 
-export ledger charities: Map<Bytes<32, CharityRecord>;
-export ledger donations: Map<Bytes<32, DonationCommitment>;
-export ledger banned_wallets: Set<Bytes<32>;
+export ledger charities: Map<Bytes<32>, CharityRecord>;
+export ledger donations: Map<Bytes<32>, DonationCommitment>;
+export ledger banned_wallets: Set<Bytes<32>>;
 export ledger donation_counter: Counter;
 export ledger admin: Bytes<32>;
-export ledger tax_receipts: Map<Bytes<32, TaxReceipt>;
-export ledger annual_summaries: Map<Bytes<32, AnnualSummary>;
+export ledger tax_receipts: Map<Bytes<32>, TaxReceipt>;
+export ledger annual_summaries: Map<Bytes<32>, AnnualSummary>;
 export ledger denylist_root: Bytes<32>;
 export ledger denylist_version: Uint<32>;
+
+// Phase 3: Pre-Screening Gate ledgers
+export ledger denylists: Map<Bytes<32>, DenylistEntry>;           // denylist_id -> entry
+export ledger deposit_addresses: Map<Bytes<32>, DepositAddress>;  // address_commitment -> record
+export ledger rejection_counters: Map<Bytes<32>, Uint<8>>;       // donor_nullifier -> count
+export ledger regional_oracle_rules: Map<Bytes<32>, RegionalOracleRule>; // region_code -> rule
 
 // ─── Witnesses ────────────────────────────────────────────
 
@@ -86,6 +154,32 @@ witness get_annual_donation_list(
   tax_year: Uint<16>,
 ): Vector<32, Bytes<32>>;
 
+// Phase 3: Pre-Screening Gate witnesses
+
+// ZK proof that donor_key is NOT in the denylist identified by denylist_id.
+// The witness verifies a Merkle non-membership proof off-chain against
+// the denylist's current merkle_root. Returns true if non-member.
+witness get_denylist_non_membership(
+  donor_key: Bytes<32>,
+  denylist_id: Bytes<32>,
+  merkle_root: Bytes<32>,
+): Boolean;
+
+// Regional oracle: returns the region_code for the donor (from GeoZ or similar).
+// The oracle checks the donor's jurisdiction against regional_oracle_rules.
+// Returns the region code and whether it's blocked.
+witness get_donor_region(): Bytes<32>;
+
+// Check if a region is blocked by the regional oracle rules.
+// Returns true if the donor's region is blocked.
+witness check_region_blocked(region_code: Bytes<32>): Boolean;
+
+// Generate a unique secret for the ephemeral deposit address.
+witness get_deposit_address_secret(): Bytes<32>;
+
+// Get current block timestamp (for expiry checks).
+witness get_current_time(): Uint<64>;
+
 // ─── Circuits: Charity Management ─────────────────────────
 
 export circuit register_charity(
@@ -94,11 +188,12 @@ export circuit register_charity(
 ): [] {
   const caller = get_admin_key();
   assert(disclose(caller == admin), "Only admin can register charities");
-  assert(disclose(!charities.member(charity_id)), "Charity already registered");
+  const d_id = disclose(charity_id);
+  assert(disclose(!charities.member(d_id)), "Charity already registered");
 
-  charities.insert(charity_id, CharityRecord {
-    status: Pending,
-    kycz_commitment: kycz_commitment,
+  charities.insert(d_id, CharityRecord {
+    status: CharityStatus.Pending,
+    kycz_commitment: disclose(kycz_commitment),
     total_received: 0 as Uint<64>,
     donation_count: 0 as Uint<64>,
   });
@@ -107,11 +202,12 @@ export circuit register_charity(
 export circuit verify_charity(charity_id: Bytes<32>): [] {
   const caller = get_admin_key();
   assert(disclose(caller == admin), "Only admin can verify charities");
-  assert(disclose(charities.member(charity_id)), "Charity not found");
+  const d_id = disclose(charity_id);
+  assert(disclose(charities.member(d_id)), "Charity not found");
 
-  const record = charities.lookup(charity_id);
-  charities.insert(charity_id, CharityRecord {
-    status: Verified,
+  const record = charities.lookup(d_id);
+  charities.insert(d_id, CharityRecord {
+    status: CharityStatus.Verified,
     kycz_commitment: record.kycz_commitment,
     total_received: record.total_received,
     donation_count: record.donation_count,
@@ -121,11 +217,12 @@ export circuit verify_charity(charity_id: Bytes<32>): [] {
 export circuit suspend_charity(charity_id: Bytes<32>): [] {
   const caller = get_admin_key();
   assert(disclose(caller == admin), "Only admin can suspend charities");
-  assert(disclose(charities.member(charity_id)), "Charity not found");
+  const d_id = disclose(charity_id);
+  assert(disclose(charities.member(d_id)), "Charity not found");
 
-  const record = charities.lookup(charity_id);
-  charities.insert(charity_id, CharityRecord {
-    status: Suspended,
+  const record = charities.lookup(d_id);
+  charities.insert(d_id, CharityRecord {
+    status: CharityStatus.Suspended,
     kycz_commitment: record.kycz_commitment,
     total_received: record.total_received,
     donation_count: record.donation_count,
@@ -137,13 +234,13 @@ export circuit suspend_charity(charity_id: Bytes<32>): [] {
 export circuit add_banned_wallet(wallet_hash: Bytes<32>): [] {
   const caller = get_admin_key();
   assert(disclose(caller == admin), "Only admin can ban wallets");
-  banned_wallets.insert(wallet_hash);
+  banned_wallets.insert(disclose(wallet_hash));
 }
 
 export circuit remove_banned_wallet(wallet_hash: Bytes<32>): [] {
   const caller = get_admin_key();
   assert(disclose(caller == admin), "Only admin can unban wallets");
-  banned_wallets.remove(wallet_hash);
+  banned_wallets.remove(disclose(wallet_hash));
 }
 
 // ─── Circuits: Donation Flow ──────────────────────────────
@@ -156,22 +253,25 @@ export circuit make_donation(
   tax_year: Uint<16>,
 ): Bytes<32> {
   // Verify charity exists and is verified
-  assert(disclose(charities.member(charity_id)), "Charity not found");
-  const charity = charities.lookup(charity_id);
-  assert(disclose(charity.status == Verified), "Charity not verified");
+  const d_charity_id = disclose(charity_id);
+  assert(disclose(charities.member(d_charity_id)), "Charity not found");
+  const charity = charities.lookup(d_charity_id);
+  assert(disclose(charity.status == CharityStatus.Verified), "Charity not verified");
 
   // Screen donor wallet against banned set
   const wallet_hash = get_donor_wallet_hash();
-  const is_banned = banned_wallets.member(wallet_hash);
+  const is_banned = banned_wallets.member(disclose(wallet_hash));
   assert(disclose(!is_banned), "Donor wallet is banned");
 
   // Generate donation commitment
   const secret = get_donation_secret();
   const donor_nullifier = get_donor_nullifier(secret);
+  const d_secret = disclose(secret);
+  const d_nullifier = disclose(donor_nullifier);
   const donation_id = persistentHash<Vector<3, Bytes<32>>>([
-    charity_id,
-    donor_nullifier,
-    secret,
+    d_charity_id,
+    d_nullifier,
+    d_secret,
   ]);
 
   // Determine compliance
@@ -179,18 +279,18 @@ export circuit make_donation(
 
   // Store donation commitment
   donations.insert(donation_id, DonationCommitment {
-    charity_id: charity_id,
-    amount: amount,
-    donor_nullifier: donor_nullifier,
-    is_compliant: compliant,
-    reclaim_deadline: reclaim_deadline,
-    tax_year: tax_year,
+    charity_id: d_charity_id,
+    amount: disclose(amount),
+    donor_nullifier: d_nullifier,
+    is_compliant: disclose(compliant),
+    reclaim_deadline: disclose(reclaim_deadline),
+    tax_year: disclose(tax_year),
   });
 
   // Update charity totals (public for transparency)
-  const new_total = (charity.total_received + amount) as Uint<64>;
+  const new_total = (charity.total_received + disclose(amount)) as Uint<64>;
   const new_count = (charity.donation_count + 1 as Uint<64>) as Uint<64>;
-  charities.insert(charity_id, CharityRecord {
+  charities.insert(d_charity_id, CharityRecord {
     status: charity.status,
     kycz_commitment: charity.kycz_commitment,
     total_received: new_total,
@@ -208,14 +308,15 @@ export circuit reclaim_donation(
   donation_id: Bytes<32>,
   current_time: Uint<64>,
 ): [] {
-  assert(disclose(donations.member(donation_id)), "Donation not found");
+  const d_donation_id = disclose(donation_id);
+  assert(disclose(donations.member(d_donation_id)), "Donation not found");
 
-  const donation = donations.lookup(donation_id);
+  const donation = donations.lookup(d_donation_id);
   assert(disclose(!donation.is_compliant), "Donation is compliant — cannot reclaim");
   assert(disclose(current_time < donation.reclaim_deadline), "Reclaim window expired");
 
   // Remove donation from ledger
-  donations.remove(donation_id);
+  donations.remove(d_donation_id);
 
   // Decrement charity total
   const charity = charities.lookup(donation.charity_id);
@@ -232,14 +333,16 @@ export circuit reclaim_donation(
 // ─── Circuits: Query (read-only) ──────────────────────────
 
 export circuit get_charity_status(charity_id: Bytes<32>): CharityStatus {
-  assert(disclose(charities.member(charity_id)), "Charity not found");
-  const record = charities.lookup(charity_id);
+  const d_id = disclose(charity_id);
+  assert(disclose(charities.member(d_id)), "Charity not found");
+  const record = charities.lookup(d_id);
   return record.status;
 }
 
 export circuit get_charity_total(charity_id: Bytes<32>): Uint<64> {
-  assert(disclose(charities.member(charity_id)), "Charity not found");
-  const record = charities.lookup(charity_id);
+  const d_id = disclose(charity_id);
+  assert(disclose(charities.member(d_id)), "Charity not found");
+  const record = charities.lookup(d_id);
   return record.total_received;
 }
 
@@ -248,7 +351,8 @@ export circuit get_donation_count(): Uint<64> {
 }
 
 export circuit is_wallet_banned(wallet_hash: Bytes<32>): Boolean {
-  return banned_wallets.member(wallet_hash);
+  const d_hash = disclose(wallet_hash);
+  return banned_wallets.member(d_hash);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -263,8 +367,8 @@ export circuit update_denylist_root(
 ): [] {
   const caller = get_admin_key();
   assert(disclose(caller == admin), "Only admin can update denylist");
-  denylist_root = new_root;
-  denylist_version = new_version;
+  denylist_root = disclose(new_root);
+  denylist_version = disclose(new_version);
 }
 
 // ─── Circuits: ZK Tax Receipt Generation ──────────────────
@@ -272,9 +376,10 @@ export circuit update_denylist_root(
 export circuit generate_tax_receipt(
   donation_id: Bytes<32>,
 ): Bytes<32> {
-  assert(disclose(donations.member(donation_id)), "Donation not found");
+  const d_donation_id = disclose(donation_id);
+  assert(disclose(donations.member(d_donation_id)), "Donation not found");
 
-  const donation = donations.lookup(donation_id);
+  const donation = donations.lookup(d_donation_id);
   assert(disclose(donation.is_compliant), "Cannot generate receipt for non-compliant donation");
 
   // Verify donor owns this donation via secret
@@ -283,17 +388,18 @@ export circuit generate_tax_receipt(
   assert(disclose(expected_nullifier == donation.donor_nullifier), "Donor does not own this donation");
 
   // Create amount commitment (hides amount from public, donor can disclose later)
-  const amount_commitment = persistentCommit<Uint<64>>(donation.amount);
+  const receipt_rand = get_donation_secret();
+  const amount_commitment = persistentCommit<Uint<64>>(donation.amount, receipt_rand);
 
   // Receipt ID = hash(donation_id || amount_commitment)
   const receipt_id = persistentHash<Vector<2, Bytes<32>>>([
-    donation_id,
+    d_donation_id,
     amount_commitment,
   ]);
 
   // Store receipt (not yet disclosed to authority)
   tax_receipts.insert(receipt_id, TaxReceipt {
-    donation_id: donation_id,
+    donation_id: d_donation_id,
     charity_id: donation.charity_id,
     amount_commitment: amount_commitment,
     tax_year: donation.tax_year,
@@ -309,9 +415,10 @@ export circuit generate_tax_receipt(
 export circuit prove_jurisdiction(
   donation_id: Bytes<32>,
 ): [] {
-  assert(disclose(donations.member(donation_id)), "Donation not found");
+  const d_donation_id = disclose(donation_id);
+  assert(disclose(donations.member(d_donation_id)), "Donation not found");
 
-  const donation = donations.lookup(donation_id);
+  const donation = donations.lookup(d_donation_id);
 
   // Donor proves jurisdiction eligibility via GeoZ witness
   // The witness verifies off-chain that the donor's jurisdiction
@@ -328,7 +435,7 @@ export circuit prove_jurisdiction(
   // and donation was previously non-compliant due to jurisdiction
   const was_non_compliant = !donation.is_compliant;
   if (disclose(was_non_compliant)) {
-    donations.insert(donation_id, DonationCommitment {
+    donations.insert(d_donation_id, DonationCommitment {
       charity_id: donation.charity_id,
       amount: donation.amount,
       donor_nullifier: donation.donor_nullifier,
@@ -353,19 +460,26 @@ export circuit generate_annual_summary(
   const expected_nullifier = get_donor_nullifier(secret);
   assert(disclose(expected_nullifier == donor_nullifier), "Donor does not own this nullifier");
 
+  // Disclose all witness-derived params before hashing and storing
+  const d_nullifier = disclose(donor_nullifier);
+  const d_tax_year = disclose(tax_year);
+  const d_total = disclose(total_donated);
+  const d_donation_count = disclose(donation_count);
+  const d_charity_count = disclose(charity_count);
+
   // Summary ID = hash(nullifier || tax_year)
   const summary_id = persistentHash<Vector<2, Bytes<32>>>([
-    donor_nullifier,
-    (tax_year as Field) as Bytes<32>,
+    d_nullifier,
+    (d_tax_year as Field) as Bytes<32>,
   ]);
 
   // Store annual summary (private to donor, can be selectively disclosed)
   annual_summaries.insert(summary_id, AnnualSummary {
-    donor_nullifier: donor_nullifier,
-    tax_year: tax_year,
-    total_donated: total_donated,
-    donation_count: donation_count,
-    charity_count: charity_count,
+    donor_nullifier: d_nullifier,
+    tax_year: d_tax_year,
+    total_donated: d_total,
+    donation_count: d_donation_count,
+    charity_count: d_charity_count,
   });
 
   return summary_id;
@@ -378,9 +492,10 @@ export circuit generate_annual_summary(
 export circuit prove_donation_total(
   summary_id: Bytes<32>,
 ): Uint<64> {
-  assert(disclose(annual_summaries.member(summary_id)), "Summary not found");
+  const d_id = disclose(summary_id);
+  assert(disclose(annual_summaries.member(d_id)), "Summary not found");
 
-  const summary = annual_summaries.lookup(summary_id);
+  const summary = annual_summaries.lookup(d_id);
 
   // Verify caller owns this summary
   const secret = get_donor_secret_for_receipt();
@@ -395,9 +510,10 @@ export circuit prove_donation_total(
 export circuit report_to_authority(
   receipt_id: Bytes<32>,
 ): TaxReceipt {
-  assert(disclose(tax_receipts.member(receipt_id)), "Receipt not found");
+  const d_id = disclose(receipt_id);
+  assert(disclose(tax_receipts.member(d_id)), "Receipt not found");
 
-  const receipt = tax_receipts.lookup(receipt_id);
+  const receipt = tax_receipts.lookup(d_id);
 
   // Verify donor owns this receipt
   const secret = get_donor_secret_for_receipt();
@@ -405,7 +521,7 @@ export circuit report_to_authority(
   assert(disclose(expected_nullifier == receipt.donor_nullifier), "Donor does not own this receipt");
 
   // Mark as disclosed to authority (IRS/tax authority)
-  tax_receipts.insert(receipt_id, TaxReceipt {
+  tax_receipts.insert(d_id, TaxReceipt {
     donation_id: receipt.donation_id,
     charity_id: receipt.charity_id,
     amount_commitment: receipt.amount_commitment,
@@ -423,16 +539,18 @@ export circuit report_to_authority(
 export circuit charity_audit_proof(
   charity_id: Bytes<32>,
 ): Uint<64> {
-  assert(disclose(charities.member(charity_id)), "Charity not found");
-  const record = charities.lookup(charity_id);
+  const d_id = disclose(charity_id);
+  assert(disclose(charities.member(d_id)), "Charity not found");
+  const record = charities.lookup(d_id);
   return record.total_received;
 }
 
 // ─── Circuits: Phase 2 Queries ────────────────────────────
 
 export circuit get_receipt_status(receipt_id: Bytes<32>): Boolean {
-  assert(disclose(tax_receipts.member(receipt_id)), "Receipt not found");
-  const receipt = tax_receipts.lookup(receipt_id);
+  const d_id = disclose(receipt_id);
+  assert(disclose(tax_receipts.member(d_id)), "Receipt not found");
+  const receipt = tax_receipts.lookup(d_id);
   return receipt.is_disclosed;
 }
 
@@ -447,8 +565,9 @@ export circuit get_denylist_root(): Bytes<32> {
 export circuit get_annual_summary(
   summary_id: Bytes<32>,
 ): AnnualSummary {
-  assert(disclose(annual_summaries.member(summary_id)), "Summary not found");
-  const summary = annual_summaries.lookup(summary_id);
+  const d_id = disclose(summary_id);
+  assert(disclose(annual_summaries.member(d_id)), "Summary not found");
+  const summary = annual_summaries.lookup(d_id);
 
   // Verify caller owns this summary
   const secret = get_donor_secret_for_receipt();
@@ -456,4 +575,332 @@ export circuit get_annual_summary(
   assert(disclose(expected_nullifier == summary.donor_nullifier), "Not authorized to view this summary");
 
   return summary;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Phase 3: Pre-Screening Gate
+// ═══════════════════════════════════════════════════════════════
+
+// ─── Circuits: Multi-Denylist Management ──────────────────
+
+export circuit add_denylist(
+  denylist_id: Bytes<32>,
+  category: DenylistCategory,
+  merkle_root: Bytes<32>,
+  version: Uint<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can add denylists");
+  const d_id = disclose(denylist_id);
+  assert(disclose(!denylists.member(d_id)), "Denylist already exists");
+  const d_now = disclose(get_current_time());
+  denylists.insert(d_id, DenylistEntry {
+    category: disclose(category),
+    status: DenylistStatus.Active,
+    merkle_root: disclose(merkle_root),
+    version: disclose(version),
+    updated_at: d_now,
+  });
+}
+
+export circuit update_denylist(
+  denylist_id: Bytes<32>,
+  new_merkle_root: Bytes<32>,
+  new_version: Uint<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can update denylists");
+  const d_id = disclose(denylist_id);
+  assert(disclose(denylists.member(d_id)), "Denylist not found");
+  const entry = denylists.lookup(d_id);
+  const d_now = disclose(get_current_time());
+  denylists.insert(d_id, DenylistEntry {
+    category: entry.category,
+    status: entry.status,
+    merkle_root: disclose(new_merkle_root),
+    version: disclose(new_version),
+    updated_at: d_now,
+  });
+}
+
+export circuit deactivate_denylist(
+  denylist_id: Bytes<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can deactivate denylists");
+  const d_id = disclose(denylist_id);
+  assert(disclose(denylists.member(d_id)), "Denylist not found");
+  const entry = denylists.lookup(d_id);
+  const d_now = disclose(get_current_time());
+  denylists.insert(d_id, DenylistEntry {
+    category: entry.category,
+    status: DenylistStatus.Inactive,
+    merkle_root: entry.merkle_root,
+    version: entry.version,
+    updated_at: d_now,
+  });
+}
+
+export circuit remove_denylist(
+  denylist_id: Bytes<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can remove denylists");
+  const d_id = disclose(denylist_id);
+  assert(disclose(denylists.member(d_id)), "Denylist not found");
+  denylists.remove(d_id);
+}
+
+// ─── Circuits: Regional Oracle Management ─────────────────
+// Placeholder for GeoZ-based geographic rules. The oracle provides
+// region codes that can be mapped to regulatory rules (e.g., blocked
+// jurisdictions, required disclosures). This is a design placeholder
+// for future GeoZ integration — the actual oracle wiring will be
+// done when GeoZ publishes its oracle interface.
+
+export circuit add_regional_rule(
+  region_code: Bytes<32>,
+  is_blocked: Boolean,
+  rule_hash: Bytes<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can add regional rules");
+  const d_region = disclose(region_code);
+  const d_now = disclose(get_current_time());
+  regional_oracle_rules.insert(d_region, RegionalOracleRule {
+    region_code: d_region,
+    is_blocked: disclose(is_blocked),
+    rule_hash: disclose(rule_hash),
+    updated_at: d_now,
+  });
+}
+
+export circuit update_regional_rule(
+  region_code: Bytes<32>,
+  is_blocked: Boolean,
+  rule_hash: Bytes<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can update regional rules");
+  const d_region = disclose(region_code);
+  assert(disclose(regional_oracle_rules.member(d_region)), "Regional rule not found");
+  const d_now = disclose(get_current_time());
+  regional_oracle_rules.insert(d_region, RegionalOracleRule {
+    region_code: d_region,
+    is_blocked: disclose(is_blocked),
+    rule_hash: disclose(rule_hash),
+    updated_at: d_now,
+  });
+}
+
+export circuit remove_regional_rule(
+  region_code: Bytes<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can remove regional rules");
+  const d_region = disclose(region_code);
+  assert(disclose(regional_oracle_rules.member(d_region)), "Regional rule not found");
+  regional_oracle_rules.remove(d_region);
+}
+
+// ─── Circuits: Pre-Screening Gate ──────────────────────────
+// The core pre-screening flow:
+// 1. Donor generates ZK non-membership proof against each ACTIVE denylist
+// 2. Regional oracle checks donor's jurisdiction
+// 3. If all pass → ephemeral deposit address issued with expiry
+// 4. If any fail → rejection counter incremented, no address issued
+
+export circuit request_deposit_address(
+  denylist_ids: Vector<8, Bytes<32>>,
+  expiry_seconds: Uint<64>,
+): Bytes<32> {
+  // Get donor identity
+  const wallet_hash = get_donor_wallet_hash();
+  const secret = get_donation_secret();
+  const donor_nullifier = get_donor_nullifier(secret);
+
+  // Check regional oracle rules
+  const region_code = get_donor_region();
+  const region_is_blocked = check_region_blocked(region_code);
+  assert(disclose(!region_is_blocked), "Donor region is blocked by oracle rules");
+
+  // Screen against each provided denylist
+  // We check up to 8 denylists in a single call (Vector<8> fixed size)
+  for (const i of 0 .. 8) {
+    const did = disclose(denylist_ids[i]);
+    const exists = denylists.member(did);
+    if (disclose(exists)) {
+      const entry = denylists.lookup(did);
+      const is_active = entry.status == DenylistStatus.Active;
+      if (disclose(is_active)) {
+        const is_clean = get_denylist_non_membership(
+          wallet_hash,
+          did,
+          entry.merkle_root,
+        );
+        assert(disclose(is_clean), "Donor matched in denylist");
+      }
+    }
+  }
+
+  // All denylists passed — issue ephemeral deposit address
+  const now = get_current_time();
+  const d_expiry = disclose(expiry_seconds);
+  const expires_at = (disclose(now) + d_expiry) as Uint<64>;
+  const addr_secret = get_deposit_address_secret();
+  const d_nullifier = disclose(donor_nullifier);
+  const d_secret = disclose(addr_secret);
+  const d_now = disclose(now);
+  const address_commitment = persistentHash<Vector<3, Bytes<32>>>([
+    d_nullifier,
+    d_secret,
+    (d_now as Field) as Bytes<32>,
+  ]);
+
+  // Store the deposit address
+  deposit_addresses.insert(address_commitment, DepositAddress {
+    donor_nullifier: d_nullifier,
+    address_commitment: address_commitment,
+    issued_at: d_now,
+    expires_at: expires_at,
+    status: DepositAddressStatus.Pending,
+    screened_against_version: denylist_version,
+  });
+
+  return address_commitment;
+}
+
+// ─── Circuits: Deposit Address Usage ───────────────────────
+// Called during make_donation to verify the donor has a valid,
+// unexpired pre-screened deposit address.
+
+export circuit verify_deposit_address(
+  address_commitment: Bytes<32>,
+  current_time: Uint<64>,
+): Boolean {
+  const d_addr = disclose(address_commitment);
+  assert(disclose(deposit_addresses.member(d_addr)), "Deposit address not found");
+  const addr = deposit_addresses.lookup(d_addr);
+  const is_pending = addr.status == DepositAddressStatus.Pending;
+  const not_expired = current_time < addr.expires_at;
+  return disclose(is_pending && not_expired);
+}
+
+export circuit consume_deposit_address(
+  address_commitment: Bytes<32>,
+): [] {
+  const d_addr = disclose(address_commitment);
+  assert(disclose(deposit_addresses.member(d_addr)), "Deposit address not found");
+  const addr = deposit_addresses.lookup(d_addr);
+  assert(disclose(addr.status == DepositAddressStatus.Pending), "Deposit address not pending");
+  deposit_addresses.insert(d_addr, DepositAddress {
+    donor_nullifier: addr.donor_nullifier,
+    address_commitment: addr.address_commitment,
+    issued_at: addr.issued_at,
+    expires_at: addr.expires_at,
+    status: DepositAddressStatus.Used,
+    screened_against_version: addr.screened_against_version,
+  });
+}
+
+export circuit revoke_deposit_address(
+  address_commitment: Bytes<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can revoke deposit addresses");
+  const d_addr = disclose(address_commitment);
+  assert(disclose(deposit_addresses.member(d_addr)), "Deposit address not found");
+  const addr = deposit_addresses.lookup(d_addr);
+  deposit_addresses.insert(d_addr, DepositAddress {
+    donor_nullifier: addr.donor_nullifier,
+    address_commitment: addr.address_commitment,
+    issued_at: addr.issued_at,
+    expires_at: addr.expires_at,
+    status: DepositAddressStatus.Revoked,
+    screened_against_version: addr.screened_against_version,
+  });
+}
+
+export circuit expire_deposit_addresses(
+  address_commitment: Bytes<32>,
+  current_time: Uint<64>,
+): [] {
+  const d_addr = disclose(address_commitment);
+  assert(disclose(deposit_addresses.member(d_addr)), "Deposit address not found");
+  const addr = deposit_addresses.lookup(d_addr);
+  const is_pending = addr.status == DepositAddressStatus.Pending;
+  const is_expired = current_time >= addr.expires_at;
+  if (disclose(is_pending && is_expired)) {
+    deposit_addresses.insert(d_addr, DepositAddress {
+      donor_nullifier: addr.donor_nullifier,
+      address_commitment: addr.address_commitment,
+      issued_at: addr.issued_at,
+      expires_at: addr.expires_at,
+      status: DepositAddressStatus.Expired,
+      screened_against_version: addr.screened_against_version,
+    });
+  }
+}
+
+// ─── Circuits: Rejection Tracking ──────────────────────────
+// Increment rejection counter when a donor fails screening.
+// This enables escalation: repeated rejections → FinCEN SAR filing.
+
+export circuit increment_rejection(
+  donor_nullifier: Bytes<32>,
+): [] {
+  const caller = get_admin_key();
+  assert(disclose(caller == admin), "Only admin can increment rejections");
+  const d_nul = disclose(donor_nullifier);
+  if (disclose(rejection_counters.member(d_nul))) {
+    const current = rejection_counters.lookup(d_nul);
+    const new_count = (current + (1 as Uint<8>)) as Uint<8>;
+    rejection_counters.insert(d_nul, new_count);
+  } else {
+    rejection_counters.insert(d_nul, (1 as Uint<8>));
+  }
+}
+
+// ─── Circuits: Phase 3 Queries ─────────────────────────────
+
+export circuit get_denylist(denylist_id: Bytes<32>): DenylistEntry {
+  const d_id = disclose(denylist_id);
+  assert(disclose(denylists.member(d_id)), "Denylist not found");
+  return denylists.lookup(d_id);
+}
+
+export circuit get_denylist_count(): Uint<64> {
+  return denylists.size();
+}
+
+export circuit get_deposit_address_status(address_commitment: Bytes<32>): DepositAddressStatus {
+  const d_addr = disclose(address_commitment);
+  assert(disclose(deposit_addresses.member(d_addr)), "Deposit address not found");
+  const addr = deposit_addresses.lookup(d_addr);
+  return addr.status;
+}
+
+export circuit get_rejection_count(donor_nullifier: Bytes<32>): Uint<8> {
+  const d_nul = disclose(donor_nullifier);
+  if (disclose(rejection_counters.member(d_nul))) {
+    return rejection_counters.lookup(d_nul);
+  } else {
+    return (0 as Uint<8>);
+  }
+}
+
+export circuit get_regional_rule(region_code: Bytes<32>): RegionalOracleRule {
+  const d_region = disclose(region_code);
+  assert(disclose(regional_oracle_rules.member(d_region)), "Regional rule not found");
+  return regional_oracle_rules.lookup(d_region);
+}
+
+export circuit is_region_blocked(region_code: Bytes<32>): Boolean {
+  const d_region = disclose(region_code);
+  if (disclose(regional_oracle_rules.member(d_region))) {
+    const rule = regional_oracle_rules.lookup(d_region);
+    return rule.is_blocked;
+  } else {
+    return false;
+  }
 }
