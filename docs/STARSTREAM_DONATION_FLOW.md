@@ -2,7 +2,7 @@
 
 **Date**: March 24, 2026
 **Authors**: Cassie + John
-**Reference**: Sebastien Guillemot (CTO, Midnight Foundation) — Starstream zkVM
+**Reference**: Sebastien Guillemot (CTO, Midnight Foundation), Starstream zkVM
 
 ---
 
@@ -17,10 +17,10 @@ CareToCoin's donation lifecycle is inherently multi-step: donate → verify juri
 ```
 Coroutine: PrivateDonation
 ├── PAUSE: Donor initiates donation
-├── RESUME: screenWallet() — prove wallet NOT in banned set
-├── PAUSE: verifyJurisdiction() — GeoZ location proof
-├── RESUME: makeDonation() — commit donation amount (private)
-├── PAUSE: generateReceipt() — ZK tax receipt
+├── RESUME: screenWallet(), prove wallet NOT in banned set
+├── PAUSE: verifyJurisdiction(), GeoZ location proof
+├── RESUME: makeDonation(), commit donation amount (private)
+├── PAUSE: generateReceipt(), ZK tax receipt
 ├── RESUME: Charity acknowledges receipt
 └── FOLD: Single proof covers: wallet clean + jurisdiction valid +
           donation committed + receipt generated
@@ -38,8 +38,8 @@ Coroutine: ResearchFundingDonation (extends PrivateDonation)
 ├── PAUSE: Link to SharedScience domain pool
 ├── LOOP for each milestone:
 │   ├── PAUSE: Wait for milestone completion (from SharedScience)
-│   ├── RESUME: disburseFunding() — release tranche to researcher
-│   └── RESUME: generateImpactProof() — ZK impact report to donor
+│   ├── RESUME: disburseFunding(), release tranche to researcher
+│   └── RESUME: generateImpactProof(), ZK impact report to donor
 └── FOLD: Single proof covers entire donation → research → impact lifecycle
 ```
 
@@ -63,7 +63,7 @@ Coroutine: ResearchFundingDonation (extends PrivateDonation)
 Proof folding is especially valuable for **tax compliance**:
 
 - The folded proof contains: donation amount + charity verification + jurisdiction check + receipt
-- The donor can selectively disclose the **entire folded proof to the IRS** — proving everything in one artifact
+- The donor can selectively disclose the **entire folded proof to the IRS**, proving everything in one artifact
 - The IRS verifies one proof instead of chasing multiple on-chain transactions
 - The charity's audit proof (total received from N donors) also folds across all donor coroutines
 
@@ -78,4 +78,4 @@ Proof folding is especially valuable for **tax compliance**:
 
 ---
 
-*Cross-pollinated with SharedScience and health data repos — Cassie + John, March 24, 2026*
+*Cross-pollinated with SharedScience and health data repos, Cassie + John, March 24, 2026*

@@ -20,12 +20,12 @@ Components are identical across modes.
 
 ## Add / remove user choices (the easy template)
 
-Edit the catalogs in `src/config/` — see `src/config/README.md`:
+Edit the catalogs in `src/config/`, see `src/config/README.md`:
 
-- `reliefOrgs.js` — organizations a donor can give to
-- `onRamps.js` — how a donor funds the donation
-- `offRamps.js` — how the recipient cashes out in Venezuela
-- `campaigns.js` — the campaigns + compliance policy
+- `reliefOrgs.js`, organizations a donor can give to
+- `onRamps.js`, how a donor funds the donation
+- `offRamps.js`, how the recipient cashes out in Venezuela
+- `campaigns.js`, the campaigns + compliance policy
 
 Set `enabled: true` and it appears in the UI. No component changes needed.
 

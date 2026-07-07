@@ -46,7 +46,7 @@ For demoLand we ship a realistic mock; for realDeal we can ingest the real publi
 ```jsonc
 // data/ofac/sdn-mock.json  (shape mirrors OFAC SDN.CSV / sdn_advanced.xml)
 {
-  "publishInfo": { "recordCount": 12, "publishDate": "2026-06-20", "source": "MOCK — shaped to match OFAC SDN" },
+  "publishInfo": { "recordCount": 12, "publishDate": "2026-06-20", "source": "MOCK, shaped to match OFAC SDN" },
   "entries": [
     {
       "uid": "90001",

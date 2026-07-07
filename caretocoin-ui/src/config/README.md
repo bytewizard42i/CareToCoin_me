@@ -1,4 +1,4 @@
-# Choice Catalogs — How to Add / Remove Options
+# Choice Catalogs, How to Add / Remove Options
 
 These four files are the **easy template** for our donation choices. They are plain
 data. The UI renders whatever is `enabled: true`, so adding or removing a user

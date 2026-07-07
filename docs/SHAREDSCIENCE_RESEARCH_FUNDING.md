@@ -1,4 +1,4 @@
-# CareToCoin × SharedScience.me — Research Funding Integration
+# CareToCoin × SharedScience.me, Research Funding Integration
 
 **Date**: March 23, 2026
 **Authors**: Cassie + John
@@ -11,7 +11,7 @@ CareToCoin is a privacy-preserving donation platform. SharedScience.me is a priv
 
 > Scientists need funding. Donors want impact. Neither wants to be fully exposed.
 
-CareToCoin already handles the donation flow — donor privacy, tax compliance, jurisdictional verification, charity verification. SharedScience already handles capability matching, progressive disclosure, and collaboration agreements. The integration is natural: **CareToCoin becomes the funding layer for SharedScience research collaborations.**
+CareToCoin already handles the donation flow, donor privacy, tax compliance, jurisdictional verification, charity verification. SharedScience already handles capability matching, progressive disclosure, and collaboration agreements. The integration is natural: **CareToCoin becomes the funding layer for SharedScience research collaborations.**
 
 ---
 
@@ -61,7 +61,7 @@ Donor                      CareToCoin                    SharedScience.me
 | Feature | How It Helps |
 |---------|-------------|
 | **Privacy-preserving donations** | Donors fund research domains without revealing identity, amounts, or wallet addresses |
-| **Tax compliance infrastructure** | ZK tax receipts for research donations — prove to IRS without public disclosure |
+| **Tax compliance infrastructure** | ZK tax receipts for research donations, prove to IRS without public disclosure |
 | **Jurisdictional verification** (via GeoZ) | Ensure research funding meets local regulations |
 | **Charity/org verification** (via DIDz/KYCz) | Verify that research organizations receiving funds are legitimate |
 | **Milestone-linked disbursement** | Funds released as collaboration agreement milestones are completed |
@@ -72,7 +72,7 @@ Donor                      CareToCoin                    SharedScience.me
 
 | Feature | How It Helps |
 |---------|-------------|
-| **Domain taxonomy** | Structured classification of research areas — donors pick domains, not researchers |
+| **Domain taxonomy** | Structured classification of research areas, donors pick domains, not researchers |
 | **Capability registry** | ZK-verified proof that funded researchers actually have the claimed expertise |
 | **Collaboration agreements** | On-chain milestone tracking that triggers CareToCoin disbursements |
 | **Reputation system** | Anonymous researcher reputation scores help donors assess track record |
@@ -86,25 +86,25 @@ Instead of building a standalone `funding-pool.compact`, SharedScience delegates
 
 ```
 CareToCoin Contract (Funding Layer)
-├── registerResearchPool()     — Create domain-specific research pool
-├── donateToPool()             — Privacy-preserving donation to a domain
-├── linkMilestones()           — Connect pool to SharedScience milestones
-├── disburseFunding()          — Release funds on milestone completion
-├── generateImpactProof()      — ZK proof of research impact for donor
-└── generateTaxReceipt()       — Tax-compliant receipt for research donations
+├── registerResearchPool()    , Create domain-specific research pool
+├── donateToPool()            , Privacy-preserving donation to a domain
+├── linkMilestones()          , Connect pool to SharedScience milestones
+├── disburseFunding()         , Release funds on milestone completion
+├── generateImpactProof()     , ZK proof of research impact for donor
+└── generateTaxReceipt()      , Tax-compliant receipt for research donations
 
 SharedScience Contract (Research Layer)
-├── capability-registry        — What researchers CAN do
-├── collaboration-agreement    — Milestone definitions and tracking
-├── reputation-tracker         — Who delivers results
-└── domain-taxonomy            — What domains are funded
+├── capability-registry       , What researchers CAN do
+├── collaboration-agreement   , Milestone definitions and tracking
+├── reputation-tracker        , Who delivers results
+└── domain-taxonomy           , What domains are funded
 ```
 
 ---
 
 ## Unbound Science Alignment
 
-Unbound Science identified the same pattern — subject-specific funding pools for research. Their model:
+Unbound Science identified the same pattern, subject-specific funding pools for research. Their model:
 - Energy, Air/Water/Soil, Pollution/Waste, Quantum funding pools
 - Tax-incentivized public donations
 - Recurring revenue through licensing
@@ -135,4 +135,4 @@ Nobody sees what they shouldn't. Everyone gets paid. Research happens. Complianc
 
 ---
 
-*Cross-pollinated from SharedScience.me — Cassie + John, March 23, 2026*
+*Cross-pollinated from SharedScience.me, Cassie + John, March 23, 2026*

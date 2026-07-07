@@ -1,4 +1,4 @@
-# CareToCoin — Privacy-Preserving Charitable Donations
+# CareToCoin, Privacy-Preserving Charitable Donations
 
 > **Giving, without the paperwork. Compliance, without the friction.**
 
@@ -12,16 +12,16 @@ Part of the **[DIDz ecosystem](https://github.com/bytewizard42i/DIDzMonolith)**.
 
 ## What Is CareToCoin?
 
-CareToCoin is a decentralized donation platform that makes charitable giving seamless, compliant, and private. Donors contribute with cryptocurrency. The DApp handles everything else — fiat conversion, direct bank deposit, tax receipt generation, jurisdictional compliance, and banned wallet screening — automatically.
+CareToCoin is a decentralized donation platform that makes charitable giving seamless, compliant, and private. Donors contribute with cryptocurrency. The DApp handles everything else, fiat conversion, direct bank deposit, tax receipt generation, jurisdictional compliance, and banned wallet screening, automatically.
 
 ### How It Works
 
 1. **Donor contributes** crypto to a charity or cause
-2. **Auto-conversion** — donation converts to fiat and deposits directly into the recipient's bank account
-3. **Tax receipts** — generated instantly for both donor and recipient via ZK-verified proofs
-4. **Compliance check** — jurisdictional rules enforced on-chain
-5. **Banned wallet screening** — automatic screening against known watchlists
-6. **Ineligible donations** — donor is prompted to reclaim within 24 hours; unclaimed funds route to compliance
+2. **Auto-conversion**, donation converts to fiat and deposits directly into the recipient's bank account
+3. **Tax receipts**, generated instantly for both donor and recipient via ZK-verified proofs
+4. **Compliance check**, jurisdictional rules enforced on-chain
+5. **Banned wallet screening**, automatic screening against known watchlists
+6. **Ineligible donations**, donor is prompted to reclaim within 24 hours; unclaimed funds route to compliance
 
 ### Why Zero-Knowledge Proofs?
 

@@ -1,4 +1,4 @@
-# CareToCoin — Midnight Paradigm (2026 Rebuild)
+# CareToCoin, Midnight Paradigm (2026 Rebuild)
 
 *The north-star document for rebuilding CareToCoin natively on Midnight. This revisits the whole paradigm with a modern lens and anchors the protocol to a real, current flagship scenario: privacy-preserving disaster relief for the June 2026 Venezuela earthquakes.*
 
@@ -158,7 +158,7 @@ Proposed layout added alongside the legacy silo:
 
 ```
 CareToCoin/
-├── coin_to_care_main/     # LEGACY Cardano/Aiken — untouched
+├── coin_to_care_main/     # LEGACY Cardano/Aiken, untouched
 ├── contracts/             # NEW Compact: caretocoin.compact + witnesses
 ├── caretocoin-api/        # NEW shared types + donation/compliance logic + config
 ├── caretocoin-ui/         # NEW React + Vite UI (demoLand/realDeal)

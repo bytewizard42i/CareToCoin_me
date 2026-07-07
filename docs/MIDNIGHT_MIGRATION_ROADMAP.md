@@ -1,4 +1,4 @@
-# CareToCoin — Midnight Migration Roadmap
+# CareToCoin, Midnight Migration Roadmap
 
 *Porting CareToCoin from Cardano/Aiken to Midnight Network with selective privacy.*
 
@@ -22,12 +22,12 @@ CareToCoin is a decentralized donation platform originally built as an Emurgo Ai
 
 ### Current Limitations
 
-- **No privacy** — All donation amounts, donor identities, and recipient info are fully public on Cardano L1
-- **Hardcoded banned wallets** — Static list, no dynamic updates
-- **Placeholder geo-location** — `is_us_based: True` is hardcoded, no actual jurisdictional checking
-- **No tax form generation** — Described in README but not implemented
-- **No fiat conversion** — Described in README but not implemented
-- **IRS wallet is a placeholder** — `#"1234..."` dummy address
+- **No privacy**, All donation amounts, donor identities, and recipient info are fully public on Cardano L1
+- **Hardcoded banned wallets**, Static list, no dynamic updates
+- **Placeholder geo-location**, `is_us_based: True` is hardcoded, no actual jurisdictional checking
+- **No tax form generation**, Described in README but not implemented
+- **No fiat conversion**, Described in README but not implemented
+- **IRS wallet is a placeholder**, `#"1234..."` dummy address
 
 ---
 
@@ -37,7 +37,7 @@ Midnight solves CareToCoin's core tension: **charitable donations need transpare
 
 | Requirement | Cardano (Current) | Midnight (Target) |
 |-------------|-------------------|-------------------|
-| Donor privacy | Fully public | ZK-shielded — prove donation without revealing identity |
+| Donor privacy | Fully public | ZK-shielded, prove donation without revealing identity |
 | Tax compliance | Not implemented | ZK proofs: "I donated $X to charity Y in tax year Z" without revealing amount to public |
 | Jurisdictional compliance | Hardcoded placeholder | GeoZ integration for privacy-preserving location verification |
 | Banned wallet screening | Static list | Dynamic on-chain set with ZK-verified screening |
@@ -54,38 +54,38 @@ Midnight solves CareToCoin's core tension: **charitable donations need transpare
 CareToCoin Contract
 │
 ├── LEDGER STATE
-│   ├── charities: Map<Bytes<32>, CharityState>     — Registered charities
-│   ├── donations: Set<Bytes<32>>                     — Donation commitment set
-│   ├── donation_meta: Map<Bytes<32>, DonationMeta>  — Donation metadata (sealed)
-│   ├── tax_receipts: Map<Bytes<32>, ReceiptCommit>  — ZK tax receipt commitments
-│   ├── banned_wallets: Set<Bytes<32>>                — Dynamic banned wallet hashes
-│   ├── compliance_proofs: Map<Bytes<32>, Bytes<32>> — Jurisdictional compliance proofs
-│   └── total_donated: Map<Bytes<32>, Uint<64>>       — Per-charity totals (public for transparency)
+│   ├── charities: Map<Bytes<32>, CharityState>    , Registered charities
+│   ├── donations: Set<Bytes<32>>                    , Donation commitment set
+│   ├── donation_meta: Map<Bytes<32>, DonationMeta> , Donation metadata (sealed)
+│   ├── tax_receipts: Map<Bytes<32>, ReceiptCommit> , ZK tax receipt commitments
+│   ├── banned_wallets: Set<Bytes<32>>               , Dynamic banned wallet hashes
+│   ├── compliance_proofs: Map<Bytes<32>, Bytes<32>>, Jurisdictional compliance proofs
+│   └── total_donated: Map<Bytes<32>, Uint<64>>      , Per-charity totals (public for transparency)
 │
-├── CIRCUITS — Charity Management
-│   ├── registerCharity()      — Register with KYCz-verified identity
-│   ├── verifyCharity()        — ZK proof of 501(c)(3) or equivalent status
-│   ├── updateCharityInfo()    — Update charity details (admin only)
-│   └── suspendCharity()       — Compliance suspension
+├── CIRCUITS, Charity Management
+│   ├── registerCharity()     , Register with KYCz-verified identity
+│   ├── verifyCharity()       , ZK proof of 501(c)(3) or equivalent status
+│   ├── updateCharityInfo()   , Update charity details (admin only)
+│   └── suspendCharity()      , Compliance suspension
 │
-├── CIRCUITS — Donation Flow
-│   ├── makeDonation()         — Privacy-preserving donation with compliance check
-│   ├── verifyJurisdiction()   — ZK proof of donor jurisdiction (via GeoZ)
-│   ├── screenWallet()         — Check donor against banned wallet set
-│   ├── generateReceipt()      — ZK tax receipt (proves donation without revealing amount publicly)
-│   └── reclaimDonation()      — Reclaim non-compliant donation within 24h window
+├── CIRCUITS, Donation Flow
+│   ├── makeDonation()        , Privacy-preserving donation with compliance check
+│   ├── verifyJurisdiction()  , ZK proof of donor jurisdiction (via GeoZ)
+│   ├── screenWallet()        , Check donor against banned wallet set
+│   ├── generateReceipt()     , ZK tax receipt (proves donation without revealing amount publicly)
+│   └── reclaimDonation()     , Reclaim non-compliant donation within 24h window
 │
-├── CIRCUITS — Compliance
-│   ├── addBannedWallet()      — Add wallet to banned set (admin/oracle)
-│   ├── removeBannedWallet()   — Remove wallet from banned set
-│   ├── proveCompliance()      — ZK proof: "This donation meets all jurisdictional requirements"
-│   └── reportToAuthority()    — Generate compliance report (selective disclosure to IRS/tax authority)
+├── CIRCUITS, Compliance
+│   ├── addBannedWallet()     , Add wallet to banned set (admin/oracle)
+│   ├── removeBannedWallet()  , Remove wallet from banned set
+│   ├── proveCompliance()     , ZK proof: "This donation meets all jurisdictional requirements"
+│   └── reportToAuthority()   , Generate compliance report (selective disclosure to IRS/tax authority)
 │
-└── CIRCUITS — Tax & Reporting
-    ├── generateTaxForm()      — ZK-verified tax deduction proof
-    ├── proveDonationTotal()   — Prove total donated in a tax year without revealing individual donations
-    ├── charityAuditProof()    — Charity proves total received without revealing individual donors
-    └── annualSummary()        — Generate annual giving summary (private to donor)
+└── CIRCUITS, Tax & Reporting
+    ├── generateTaxForm()     , ZK-verified tax deduction proof
+    ├── proveDonationTotal()  , Prove total donated in a tax year without revealing individual donations
+    ├── charityAuditProof()   , Charity proves total received without revealing individual donors
+    └── annualSummary()       , Generate annual giving summary (private to donor)
 ```
 
 ### Privacy Model
@@ -132,11 +132,11 @@ SELECTIVE DISCLOSURE (ZK Proofs):
 
 ### Cross-Pollination Opportunities
 
-**CareToCoin → Roots & Wings Foundation**: Judy Faulkner's pledge to donate 99% of wealth. CareToCoin could be the privacy-preserving infrastructure for high-net-worth charitable giving — proving compliance without revealing the full extent of assets.
+**CareToCoin → Roots & Wings Foundation**: Judy Faulkner's pledge to donate 99% of wealth. CareToCoin could be the privacy-preserving infrastructure for high-net-worth charitable giving, proving compliance without revealing the full extent of assets.
 
-**CareToCoin → SentinelDID Emergency Relief**: During disasters, SentinelDID coordinates the workforce. CareToCoin handles the donation flow — donors can give to verified emergency relief efforts with ZK-proven compliance, and charities can prove funds were deployed appropriately.
+**CareToCoin → SentinelDID Emergency Relief**: During disasters, SentinelDID coordinates the workforce. CareToCoin handles the donation flow, donors can give to verified emergency relief efforts with ZK-proven compliance, and charities can prove funds were deployed appropriately.
 
-**CareToCoin → petProData / equineProData**: Animal welfare donations — donors fund specific animal rescue operations or veterinary care with ZK-verified proof of impact. The animal's DID links to the donation receipt.
+**CareToCoin → petProData / equineProData**: Animal welfare donations, donors fund specific animal rescue operations or veterinary care with ZK-verified proof of impact. The animal's DID links to the donation receipt.
 
 ---
 
@@ -170,13 +170,13 @@ SELECTIVE DISCLOSURE (ZK Proofs):
 
 ## Key Design Decisions
 
-1. **No fiat conversion on-chain** — Fiat off-ramp handled by partner integrations (banking APIs), not smart contract logic. The contract proves the donation; the off-ramp is a separate service.
+1. **No fiat conversion on-chain**, Fiat off-ramp handled by partner integrations (banking APIs), not smart contract logic. The contract proves the donation; the off-ramp is a separate service.
 
-2. **Banned wallet screening uses hashes** — Wallet addresses are hashed before comparison. The banned list is public (hashed), but screening happens via ZK proof — the donor proves their wallet is NOT in the banned set without revealing their wallet.
+2. **Banned wallet screening uses hashes**, Wallet addresses are hashed before comparison. The banned list is public (hashed), but screening happens via ZK proof, the donor proves their wallet is NOT in the banned set without revealing their wallet.
 
-3. **Tax receipts are commitments** — The receipt is a ZK commitment. The donor can selectively disclose to the IRS. The charity never sees the donor's tax situation.
+3. **Tax receipts are commitments**, The receipt is a ZK commitment. The donor can selectively disclose to the IRS. The charity never sees the donor's tax situation.
 
-4. **Charity totals are public** — For transparency and trust. Individual donation amounts and donor identities remain private.
+4. **Charity totals are public**, For transparency and trust. Individual donation amounts and donor identities remain private.
 
 ---
 

@@ -1,4 +1,4 @@
-# CareToCoin — Master Plan
+# CareToCoin, Master Plan
 
 *The single reference for the Midnight rebuild. Everything John asked for lives here or is linked from here. If it is not in this doc, it is not in the plan. Keep this verbose and up to date.*
 
@@ -124,21 +124,21 @@ Full design in `OFAC_SCREENING_DESIGN.md`. Headline: mirror the real OFAC **SDN*
 
 **Phase 0 (now)**: paradigm + master plan + research docs (this batch). Fix Mars emoji. [in progress]
 
-**Phase 1 — demoLand Venezuela walkthrough (no chain)**:
+**Phase 1, demoLand Venezuela walkthrough (no chain)**:
 - Scaffold `caretocoin-ui/` (React + Vite) + `providers/` factory (demoland/realdeal) + `.env.demoland` / `.env.realdeal`.
 - Seed the Venezuela scenario: 1 verified relief org, a GeoZ affected-zone, a mock OFAC denylist, several demo donors (incl. one flagged), scripted donate -> screen -> zone-verify -> commit -> receipt flow.
 - DEMO MODE banner. Tellable end to end without a proof server.
 
-**Phase 2 — realDeal contracts (async, parallel to Phase 1)**:
+**Phase 2, realDeal contracts (async, parallel to Phase 1)**:
 - Author + compile the modules in section 3 (compile-first).
 - `caretocoin-api/` shared types + logic + config.
 - Wire realDeal providers to deployed contract on local stack, then pre-prod.
 
-**Phase 3 — coordination + arms**:
+**Phase 3, coordination + arms**:
 - `EmergencyCoordination` shared with SentinelDID.
 - Political-donation policy; general-charity policy; GoFundMe bridge attestation.
 
-**Phase 4 — off-ramp + pilots**:
+**Phase 4, off-ramp + pilots**:
 - Integrate chosen off-ramp partner.
 - Starstream coroutine refactor when it lands.
 
